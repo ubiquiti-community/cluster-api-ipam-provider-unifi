@@ -15,8 +15,8 @@ resources:
     domain: cluster.x-k8s.io
     group: ipam
     kind: UnifiInstance
-    path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1
-    version: v1alpha1
+    path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
+    version: v1beta2
   - api:
       crdVersion: v1
       namespaced: true
@@ -24,6 +24,6 @@ resources:
     domain: cluster.x-k8s.io
     group: ipam
     kind: UnifiIPPool
-    path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1
-    version: v1alpha1
+    path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
+    version: v1beta2
 version: "3"

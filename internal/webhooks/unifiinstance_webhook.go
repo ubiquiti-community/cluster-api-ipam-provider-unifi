@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 // UnifiInstanceWebhook implements validating and defaulting webhooks for UnifiInstance.
@@ -40,7 +40,7 @@ type UnifiInstanceWebhook struct {
 func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
 	return ctrl.NewWebhookManagedBy(mgr).
-		For(&ipamv1alpha1.UnifiInstance{}).
+		For(&ipamv1beta2.UnifiInstance{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
@@ -50,14 +50,15 @@ func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 // Default implements webhook.Defaulter.
 func (w *UnifiInstanceWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	instance, ok := obj.(*ipamv1alpha1.UnifiInstance)
+	instance, ok := obj.(*ipamv1beta2.UnifiInstance)
 	if !ok {
 		return fmt.Errorf("expected UnifiInstance, got %T", obj)
 	}
 
 	// Set default site if not specified.
-	if instance.Spec.Site == "" {
-		instance.Spec.Site = "default"
+	if instance.Spec.Site == nil || *instance.Spec.Site == "" {
+		defaultSite := "default"
+		instance.Spec.Site = &defaultSite
 	}
 
 	return nil
@@ -67,7 +68,7 @@ func (w *UnifiInstanceWebhook) Default(ctx context.Context, obj runtime.Object) 
 
 // ValidateCreate implements webhook.CustomValidator.
 func (w *UnifiInstanceWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	instance, ok := obj.(*ipamv1alpha1.UnifiInstance)
+	instance, ok := obj.(*ipamv1beta2.UnifiInstance)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiInstance, got %T", obj)
 	}
@@ -77,12 +78,12 @@ func (w *UnifiInstanceWebhook) ValidateCreate(ctx context.Context, obj runtime.O
 
 // ValidateUpdate implements webhook.CustomValidator.
 func (w *UnifiInstanceWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	_, ok := oldObj.(*ipamv1alpha1.UnifiInstance)
+	_, ok := oldObj.(*ipamv1beta2.UnifiInstance)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiInstance, got %T", oldObj)
 	}
 
-	newInstance, ok := newObj.(*ipamv1alpha1.UnifiInstance)
+	newInstance, ok := newObj.(*ipamv1beta2.UnifiInstance)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiInstance, got %T", newObj)
 	}
@@ -92,7 +93,7 @@ func (w *UnifiInstanceWebhook) ValidateUpdate(ctx context.Context, oldObj, newOb
 
 // ValidateDelete implements webhook.CustomValidator.
 func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	instance, ok := obj.(*ipamv1alpha1.UnifiInstance)
+	instance, ok := obj.(*ipamv1beta2.UnifiInstance)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiInstance, got %T", obj)
 	}
@@ -103,7 +104,7 @@ func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, obj runtime.O
 	}
 
 	// Check if there are UnifiIPPools referencing this instance.
-	poolList := &ipamv1alpha1.UnifiIPPoolList{}
+	poolList := &ipamv1beta2.UnifiIPPoolList{}
 	if err := w.Client.List(ctx, poolList, client.InNamespace(instance.Namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list UnifiIPPools: %w", err)
 	}
@@ -131,12 +132,14 @@ func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, obj runtime.O
 }
 
 // validate performs common validation for create and update.
-func (w *UnifiInstanceWebhook) validate(ctx context.Context, instance *ipamv1alpha1.UnifiInstance) error {
+func (w *UnifiInstanceWebhook) validate(ctx context.Context, instance *ipamv1beta2.UnifiInstance) error {
 	var allErrs field.ErrorList
 
 	allErrs = append(allErrs, validateHost(instance.Spec.Host)...)
 	allErrs = append(allErrs, w.validateCredentialsRef(ctx, instance)...)
-	allErrs = append(allErrs, validateSiteName(instance.Spec.Site)...)
+	if instance.Spec.Site != nil {
+		allErrs = append(allErrs, validateSiteName(*instance.Spec.Site)...)
+	}
 
 	if len(allErrs) > 0 {
 		return allErrs.ToAggregate()
@@ -180,7 +183,7 @@ func validateHost(host string) field.ErrorList {
 	return allErrs
 }
 
-func (w *UnifiInstanceWebhook) validateCredentialsRef(ctx context.Context, instance *ipamv1alpha1.UnifiInstance) field.ErrorList {
+func (w *UnifiInstanceWebhook) validateCredentialsRef(ctx context.Context, instance *ipamv1beta2.UnifiInstance) field.ErrorList {
 	var allErrs field.ErrorList
 
 	if instance.Spec.CredentialsRef.Name == "" {

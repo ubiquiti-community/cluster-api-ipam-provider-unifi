@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
@@ -54,7 +54,7 @@ var _ ipamutil.ProviderAdapter = &UnifiProviderAdapter{}
 type UnifiClaimHandler struct {
 	client.Client
 	claim *ipamv1.IPAddressClaim
-	pool  *ipamv1alpha1.UnifiIPPool
+	pool  *ipamv1beta2.UnifiIPPool
 }
 
 var _ ipamutil.ClaimHandler = &UnifiClaimHandler{}
@@ -70,7 +70,7 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 				}
 				return claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
 					claim.Spec.PoolRef.APIGroup != nil &&
-					*claim.Spec.PoolRef.APIGroup == ipamv1alpha1.GroupVersion.Group
+					*claim.Spec.PoolRef.APIGroup == ipamv1beta2.GroupVersion.Group
 			}),
 		)).
 		WithOptions(controller.Options{
@@ -78,7 +78,7 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 			MaxConcurrentReconciles: 1,
 		}).
 		Watches(
-			&ipamv1alpha1.UnifiIPPool{},
+			&ipamv1beta2.UnifiIPPool{},
 			handler.EnqueueRequestsFromMapFunc(a.unifiIPPoolToIPClaims),
 			builder.WithPredicates(
 				predicates.ResourceTransitionedToUnpaused(),
@@ -92,7 +92,7 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 
 // unifiIPPoolToIPClaims maps UnifiIPPool events to IPAddressClaim reconcile requests.
 func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj client.Object) []reconcile.Request {
-	pool, ok := obj.(*ipamv1alpha1.UnifiIPPool)
+	pool, ok := obj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return nil
 	}
@@ -108,7 +108,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 		if claim.Spec.PoolRef.Name == pool.Name &&
 			claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
 			claim.Spec.PoolRef.APIGroup != nil &&
-			*claim.Spec.PoolRef.APIGroup == ipamv1alpha1.GroupVersion.Group {
+			*claim.Spec.PoolRef.APIGroup == ipamv1beta2.GroupVersion.Group {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      claim.Name,
@@ -133,7 +133,7 @@ func (a *UnifiProviderAdapter) ClaimHandlerFor(_ client.Client, claim *ipamv1.IP
 func (h *UnifiClaimHandler) FetchPool(ctx context.Context) (client.Object, *ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
-	pool := &ipamv1alpha1.UnifiIPPool{}
+	pool := &ipamv1beta2.UnifiIPPool{}
 	poolKey := types.NamespacedName{
 		Name:      h.claim.Spec.PoolRef.Name,
 		Namespace: h.claim.Namespace,
@@ -156,7 +156,7 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1.I
 	logger := ctrl.LoggerFrom(ctx)
 
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, h.Client, h.pool.Namespace,
-		h.pool.Name, unifiIPPoolKind, ipamv1alpha1.GroupVersion.Group)
+		h.pool.Name, unifiIPPoolKind, ipamv1beta2.GroupVersion.Group)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses in use: %w", err)
 	}
@@ -182,7 +182,7 @@ func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1.IPAddress, addres
 	return false
 }
 
-func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client, *ipamv1alpha1.SubnetSpec, error) {
+func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client, *ipamv1beta2.SubnetSpec, error) {
 	instance, err := h.getUnifiInstance(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -193,11 +193,20 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client,
 		return nil, nil, err
 	}
 
+	site := "default"
+	if instance.Spec.Site != nil {
+		site = *instance.Spec.Site
+	}
+	insecure := false
+	if instance.Spec.Insecure != nil {
+		insecure = *instance.Spec.Insecure
+	}
+
 	unifiClient, err := unifi.NewClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   string(secret.Data["apiKey"]),
-		Site:     instance.Spec.Site,
-		Insecure: instance.Spec.Insecure,
+		Site:     site,
+		Insecure: insecure,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create Unifi client: %w", err)
@@ -210,8 +219,8 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client,
 	return unifiClient, &h.pool.Spec.Subnets[0], nil
 }
 
-func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*ipamv1alpha1.UnifiInstance, error) {
-	instance := &ipamv1alpha1.UnifiInstance{}
+func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*ipamv1beta2.UnifiInstance, error) {
+	instance := &ipamv1beta2.UnifiInstance{}
 	instanceKey := types.NamespacedName{
 		Name:      h.pool.Spec.InstanceRef.Name,
 		Namespace: h.pool.Spec.InstanceRef.Namespace,
@@ -227,7 +236,7 @@ func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*ipamv1alpha1
 	return instance, nil
 }
 
-func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *ipamv1alpha1.UnifiInstance) (*corev1.Secret, error) {
+func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *ipamv1beta2.UnifiInstance) (*corev1.Secret, error) {
 	var secret corev1.Secret
 	if err := h.Get(ctx, types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,
@@ -238,7 +247,7 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 	return &secret, nil
 }
 
-func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1.IPAddress, unifiClient *unifi.Client, subnetSpec *ipamv1alpha1.SubnetSpec, addressesInUse []ipamv1.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
+func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1.IPAddress, unifiClient *unifi.Client, subnetSpec *ipamv1beta2.SubnetSpec, addressesInUse []ipamv1.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
 	allocation, err := unifiClient.GetOrAllocateIP(
@@ -255,8 +264,8 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1.IPAd
 
 	address.Spec.Address = allocation.IPAddress
 	address.Spec.Gateway = subnetSpec.Gateway
-	if subnetSpec.Prefix > 0 {
-		address.Spec.Prefix = subnetSpec.Prefix
+	if subnetSpec.Prefix != nil && *subnetSpec.Prefix > 0 {
+		address.Spec.Prefix = int(*subnetSpec.Prefix)
 	}
 
 	logger.Info("allocated IP address",

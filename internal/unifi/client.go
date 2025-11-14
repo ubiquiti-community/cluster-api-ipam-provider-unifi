@@ -26,7 +26,7 @@ import (
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
@@ -127,7 +127,7 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (*unifi.Netwo
 }
 
 // GetOrAllocateIP gets an existing IP or allocates a new one.
-func (c *Client) GetOrAllocateIP(ctx context.Context, networkID, macAddress, hostname string, poolSpec *ipamv1alpha1.SubnetSpec, addressesInUse []ipamv1.IPAddress) (*IPAllocation, error) {
+func (c *Client) GetOrAllocateIP(ctx context.Context, networkID, macAddress, hostname string, poolSpec *ipamv1beta2.SubnetSpec, addressesInUse []ipamv1.IPAddress) (*IPAllocation, error) {
 	// First, check if this MAC already has a fixed IP assignment via User object.
 	existingUser, err := c.client.GetUserByMAC(ctx, c.site, macAddress)
 	if err == nil && existingUser != nil {
@@ -186,7 +186,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, networkID, macAddress, hos
 }
 
 // allocateNextIP finds the next available IP using poolutil.
-func (c *Client) allocateNextIP(_ *unifi.Network, subnetSpec *ipamv1alpha1.SubnetSpec, addressesInUse []ipamv1.IPAddress) (string, error) {
+func (c *Client) allocateNextIP(_ *unifi.Network, subnetSpec *ipamv1beta2.SubnetSpec, addressesInUse []ipamv1.IPAddress) (string, error) {
 	if subnetSpec == nil {
 		return "", fmt.Errorf("subnet spec is nil")
 	}

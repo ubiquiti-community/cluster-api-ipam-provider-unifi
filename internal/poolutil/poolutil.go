@@ -24,7 +24,7 @@ import (
 	"go4.org/netipx"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
@@ -90,7 +90,7 @@ func AddressesToIPSet(addresses []string) (*netipx.IPSet, error) {
 }
 
 // PoolSpecToIPSet converts a SubnetSpec to an IPSet.
-func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
+func PoolSpecToIPSet(poolSpec *ipamv1beta2.SubnetSpec) (*netipx.IPSet, error) {
 	if poolSpec == nil {
 		return nil, fmt.Errorf("pool spec is nil")
 	}
@@ -174,9 +174,9 @@ func FindNextAvailableIP(poolIPSet, inUseIPSet *netipx.IPSet) (string, error) {
 }
 
 // ComputePoolStatus computes the status summary for a pool.
-func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddress, poolNamespace string) *ipamv1alpha1.IPAddressStatusSummary {
+func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddress, poolNamespace string) *ipamv1beta2.IPAddressStatusSummary {
 	if poolIPSet == nil {
-		return &ipamv1alpha1.IPAddressStatusSummary{}
+		return &ipamv1beta2.IPAddressStatusSummary{}
 	}
 
 	totalCount := computeTotalAddresses(poolIPSet)
@@ -187,11 +187,16 @@ func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddres
 		freeCount = 0
 	}
 
-	return &ipamv1alpha1.IPAddressStatusSummary{
-		Total:      totalCount,
-		Used:       usedCount,
-		Free:       freeCount,
-		OutOfRange: outOfRangeCount,
+	total := int32(totalCount)
+	used := int32(usedCount)
+	free := int32(freeCount)
+	outOfRange := int32(outOfRangeCount)
+
+	return &ipamv1beta2.IPAddressStatusSummary{
+		Total:      &total,
+		Used:       &used,
+		Free:       &free,
+		OutOfRange: &outOfRange,
 	}
 }
 

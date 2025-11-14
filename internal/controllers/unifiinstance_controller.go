@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 )
 
@@ -49,7 +49,7 @@ type UnifiInstanceReconciler struct {
 func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	instance := &ipamv1alpha1.UnifiInstance{}
+	instance := &ipamv1beta2.UnifiInstance{}
 	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -71,7 +71,7 @@ func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return r.updateStatusReady(ctx, instance, logger, client != nil)
 }
 
-func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *ipamv1alpha1.UnifiInstance, logger logr.Logger) (string, error) {
+func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *ipamv1beta2.UnifiInstance, logger logr.Logger) (string, error) {
 	secret := &corev1.Secret{}
 	secretName := types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,
@@ -91,12 +91,20 @@ func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *ipamv
 	return apiKey, nil
 }
 
-func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *ipamv1alpha1.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.Client, error) {
+func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *ipamv1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.Client, error) {
+	site := "default"
+	if instance.Spec.Site != nil {
+		site = *instance.Spec.Site
+	}
+	insecure := false
+	if instance.Spec.Insecure != nil {
+		insecure = *instance.Spec.Insecure
+	}
 	client, err := unifi.NewClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   apiKey,
-		Site:     instance.Spec.Site,
-		Insecure: instance.Spec.Insecure,
+		Site:     site,
+		Insecure: insecure,
 	})
 	if err != nil {
 		return nil, r.updateStatusError(ctx, instance, logger, "ClientCreationFailed", fmt.Sprintf("failed to create Unifi client: %v", err), err)
@@ -109,19 +117,20 @@ func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, i
 	return client, nil
 }
 
-func (r *UnifiInstanceReconciler) updateStatusError(ctx context.Context, instance *ipamv1alpha1.UnifiInstance, logger logr.Logger, reason, message string, origErr error) error {
+func (r *UnifiInstanceReconciler) updateStatusError(ctx context.Context, instance *ipamv1beta2.UnifiInstance, logger logr.Logger, reason, message string, origErr error) error {
 	logger.Error(origErr, "validation failed")
-	instance.Status.Ready = false
-	instance.Status.FailureReason = ptr(reason)
-	instance.Status.FailureMessage = ptr(message)
+	falseVal := false
+	instance.Status.Ready = &falseVal
+	instance.Status.FailureReason = &reason
+	instance.Status.FailureMessage = &message
 	if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
 		logger.Error(updateErr, "unable to update UnifiInstance status")
 	}
 	return origErr
 }
 
-func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instance *ipamv1alpha1.UnifiInstance, logger logr.Logger, ready bool) (ctrl.Result, error) {
-	instance.Status.Ready = ready
+func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instance *ipamv1beta2.UnifiInstance, logger logr.Logger, ready bool) (ctrl.Result, error) {
+	instance.Status.Ready = &ready
 	instance.Status.FailureReason = nil
 	instance.Status.FailureMessage = nil
 	now := metav1.Now()
@@ -139,7 +148,7 @@ func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instanc
 // SetupWithManager sets up the controller with the Manager.
 func (r *UnifiInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&ipamv1alpha1.UnifiInstance{}).
+		For(&ipamv1beta2.UnifiInstance{}).
 		Complete(r)
 }
 

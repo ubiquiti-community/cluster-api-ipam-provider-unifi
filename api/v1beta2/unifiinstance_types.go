@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta2
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -35,19 +35,20 @@ type UnifiInstanceSpec struct {
 	// Site is the Unifi site name (defaults to "default")
 	// +optional
 	// +kubebuilder:default="default"
-	Site string `json:"site,omitempty"`
+	Site *string `json:"site,omitempty"`
 
 	// Insecure allows insecure HTTPS connections (skip TLS verification)
 	// +optional.
-	Insecure bool `json:"insecure,omitempty"`
+	Insecure *bool `json:"insecure,omitempty"`
 }
 
 // UnifiInstanceStatus defines the observed state of UnifiInstance.
 type UnifiInstanceStatus struct {
 	// Ready indicates whether the instance is ready for use.
-	Ready bool `json:"ready"`
+	// +optional.
+	Ready *bool `json:"ready,omitempty"`
 
-	// Conditions define the current state of the UnifiInstance
+	// Conditions define the current state of the UnifiInstance using metav1.Conditions
 	// +optional.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
@@ -67,6 +68,7 @@ type UnifiInstanceStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=unifiinstances,scope=Namespaced
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=`.status.ready`
 // +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

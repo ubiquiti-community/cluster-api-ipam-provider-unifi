@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
@@ -47,7 +47,7 @@ type UnifiIPPoolWebhook struct {
 func (w *UnifiIPPoolWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
 	return ctrl.NewWebhookManagedBy(mgr).
-		For(&ipamv1alpha1.UnifiIPPool{}).
+		For(&ipamv1beta2.UnifiIPPool{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
@@ -57,7 +57,7 @@ func (w *UnifiIPPoolWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 // Default implements webhook.Defaulter.
 func (w *UnifiIPPoolWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	pool, ok := obj.(*ipamv1alpha1.UnifiIPPool)
+	pool, ok := obj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return fmt.Errorf("expected UnifiIPPool, got %T", obj)
 	}
@@ -74,7 +74,7 @@ func (w *UnifiIPPoolWebhook) Default(ctx context.Context, obj runtime.Object) er
 
 // ValidateCreate implements webhook.CustomValidator.
 func (w *UnifiIPPoolWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	pool, ok := obj.(*ipamv1alpha1.UnifiIPPool)
+	pool, ok := obj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiIPPool, got %T", obj)
 	}
@@ -84,12 +84,12 @@ func (w *UnifiIPPoolWebhook) ValidateCreate(ctx context.Context, obj runtime.Obj
 
 // ValidateUpdate implements webhook.CustomValidator.
 func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	oldPool, ok := oldObj.(*ipamv1alpha1.UnifiIPPool)
+	oldPool, ok := oldObj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiIPPool, got %T", oldObj)
 	}
 
-	newPool, ok := newObj.(*ipamv1alpha1.UnifiIPPool)
+	newPool, ok := newObj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiIPPool, got %T", newObj)
 	}
@@ -105,7 +105,7 @@ func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj 
 
 // ValidateDelete implements webhook.CustomValidator.
 func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	pool, ok := obj.(*ipamv1alpha1.UnifiIPPool)
+	pool, ok := obj.(*ipamv1beta2.UnifiIPPool)
 	if !ok {
 		return nil, fmt.Errorf("expected UnifiIPPool, got %T", obj)
 	}
@@ -132,7 +132,7 @@ func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, obj runtime.Obj
 }
 
 // validate performs common validation for create and update.
-func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *ipamv1alpha1.UnifiIPPool) error {
+func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *ipamv1beta2.UnifiIPPool) error {
 	var allErrs field.ErrorList
 
 	// Validate NetworkID.
@@ -151,7 +151,7 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *ipamv1alpha1.Un
 		instanceNamespace = pool.Namespace
 	}
 
-	instance := &ipamv1alpha1.UnifiInstance{}
+	instance := &ipamv1beta2.UnifiInstance{}
 	instanceKey := client.ObjectKey{
 		Name:      pool.Spec.InstanceRef.Name,
 		Namespace: instanceNamespace,
@@ -182,7 +182,7 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *ipamv1alpha1.Un
 }
 
 // validateSubnet validates a single subnet specification.
-func validateSubnet(subnet *ipamv1alpha1.SubnetSpec, fldPath *field.Path) field.ErrorList {
+func validateSubnet(subnet *ipamv1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
 	cidr, err := netip.ParsePrefix(subnet.CIDR)
@@ -199,21 +199,21 @@ func validateSubnet(subnet *ipamv1alpha1.SubnetSpec, fldPath *field.Path) field.
 	return allErrs
 }
 
-func validatePrefix(subnet *ipamv1alpha1.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
+func validatePrefix(subnet *ipamv1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	if cidr.Bits() != subnet.Prefix {
+	if subnet.Prefix != nil && cidr.Bits() != int(*subnet.Prefix) {
 		allErrs = append(allErrs, field.Invalid(
 			fldPath.Child("prefix"),
 			subnet.Prefix,
-			fmt.Sprintf("prefix %d does not match CIDR %s (expected %d)", subnet.Prefix, subnet.CIDR, cidr.Bits()),
+			fmt.Sprintf("prefix %d does not match CIDR %s (expected %d)", *subnet.Prefix, subnet.CIDR, cidr.Bits()),
 		))
 	}
 
 	return allErrs
 }
 
-func validateGateway(subnet *ipamv1alpha1.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
+func validateGateway(subnet *ipamv1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
 	gateway, err := netip.ParseAddr(subnet.Gateway)
@@ -233,7 +233,7 @@ func validateGateway(subnet *ipamv1alpha1.SubnetSpec, cidr netip.Prefix, fldPath
 	return allErrs
 }
 
-func validateExcludeRanges(subnet *ipamv1alpha1.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
+func validateExcludeRanges(subnet *ipamv1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
 	for j, excludeRange := range subnet.ExcludeRanges {
@@ -281,7 +281,7 @@ func validateExcludeRange(excludeRange string, cidr netip.Prefix, cidrStr string
 	return allErrs
 }
 
-func validateDNS(subnet *ipamv1alpha1.SubnetSpec, fldPath *field.Path) field.ErrorList {
+func validateDNS(subnet *ipamv1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
 	for j, dns := range subnet.DNS {
@@ -295,7 +295,7 @@ func validateDNS(subnet *ipamv1alpha1.SubnetSpec, fldPath *field.Path) field.Err
 }
 
 // validateUpdate checks if the update would orphan allocated IPs.
-func (w *UnifiIPPoolWebhook) validateUpdate(ctx context.Context, oldPool, newPool *ipamv1alpha1.UnifiIPPool) error {
+func (w *UnifiIPPoolWebhook) validateUpdate(ctx context.Context, oldPool, newPool *ipamv1beta2.UnifiIPPool) error {
 	addresses, err := poolutil.ListAddressesInUse(ctx, w.Client, oldPool.Namespace, oldPool.Name, "UnifiIPPool", "ipam.cluster.x-k8s.io")
 	if err != nil {
 		return fmt.Errorf("failed to list allocated addresses: %w", err)
@@ -321,7 +321,7 @@ func (w *UnifiIPPoolWebhook) validateUpdate(ctx context.Context, oldPool, newPoo
 	return nil
 }
 
-func buildNewPoolIPSet(newPool *ipamv1alpha1.UnifiIPPool) (*netipx.IPSet, error) {
+func buildNewPoolIPSet(newPool *ipamv1beta2.UnifiIPPool) (*netipx.IPSet, error) {
 	var newIPSet *netipx.IPSet
 	if len(newPool.Spec.Subnets) > 0 {
 		var err error

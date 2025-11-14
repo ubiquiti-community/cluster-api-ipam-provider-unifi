@@ -23,7 +23,7 @@ import (
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
@@ -125,7 +125,7 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 		networkID      string
 		macAddress     string
 		hostname       string
-		poolSpec       *ipamv1alpha1.SubnetSpec
+		poolSpec       *ipamv1beta2.SubnetSpec
 		addressesInUse []ipamv1.IPAddress
 	}
 	tests := []struct {
@@ -162,7 +162,7 @@ func TestClient_allocateNextIP(t *testing.T) {
 	}
 	type args struct {
 		network        *unifi.Network
-		subnetSpec     *ipamv1alpha1.SubnetSpec
+		subnetSpec     *ipamv1beta2.SubnetSpec
 		addressesInUse []ipamv1.IPAddress
 	}
 	tests := []struct {

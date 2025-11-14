@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
@@ -59,7 +59,7 @@ type UnifiIPPoolReconciler struct {
 func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	pool := &ipamv1alpha1.UnifiIPPool{}
+	pool := &ipamv1beta2.UnifiIPPool{}
 	if err := r.Get(ctx, req.NamespacedName, pool); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -77,7 +77,7 @@ func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	if !instance.Status.Ready {
+	if instance.Status.Ready == nil || !*instance.Status.Ready {
 		logger.Info("waiting for UnifiInstance to be ready", "instance", client.ObjectKeyFromObject(instance))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -88,7 +88,7 @@ func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, r.Client, pool.Namespace,
-		pool.Name, "UnifiIPPool", ipamv1alpha1.GroupVersion.Group)
+		pool.Name, "UnifiIPPool", ipamv1beta2.GroupVersion.Group)
 	if err != nil {
 		logger.Error(err, "unable to list addresses in use")
 		return ctrl.Result{}, err
@@ -97,9 +97,9 @@ func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return r.updatePoolStatus(ctx, pool, poolIPSet, addressesInUse, logger)
 }
 
-func (r *UnifiIPPoolReconciler) handleDeletion(ctx context.Context, pool *ipamv1alpha1.UnifiIPPool, logger logr.Logger) (ctrl.Result, error) {
+func (r *UnifiIPPoolReconciler) handleDeletion(ctx context.Context, pool *ipamv1beta2.UnifiIPPool, logger logr.Logger) (ctrl.Result, error) {
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, r.Client, pool.Namespace,
-		pool.Name, "UnifiIPPool", ipamv1alpha1.GroupVersion.Group)
+		pool.Name, "UnifiIPPool", ipamv1beta2.GroupVersion.Group)
 	if err != nil {
 		logger.Error(err, "unable to list addresses in use")
 		return ctrl.Result{}, err
@@ -119,8 +119,8 @@ func (r *UnifiIPPoolReconciler) handleDeletion(ctx context.Context, pool *ipamv1
 	return ctrl.Result{}, nil
 }
 
-func (r *UnifiIPPoolReconciler) getUnifiInstance(ctx context.Context, pool *ipamv1alpha1.UnifiIPPool, logger logr.Logger) (*ipamv1alpha1.UnifiInstance, error) {
-	instance := &ipamv1alpha1.UnifiInstance{}
+func (r *UnifiIPPoolReconciler) getUnifiInstance(ctx context.Context, pool *ipamv1beta2.UnifiIPPool, logger logr.Logger) (*ipamv1beta2.UnifiInstance, error) {
+	instance := &ipamv1beta2.UnifiInstance{}
 	instanceKey := types.NamespacedName{
 		Name:      pool.Spec.InstanceRef.Name,
 		Namespace: pool.Spec.InstanceRef.Namespace,
@@ -137,7 +137,7 @@ func (r *UnifiIPPoolReconciler) getUnifiInstance(ctx context.Context, pool *ipam
 	return instance, nil
 }
 
-func (r *UnifiIPPoolReconciler) buildPoolIPSet(pool *ipamv1alpha1.UnifiIPPool, logger logr.Logger) (*netipx.IPSet, error) {
+func (r *UnifiIPPoolReconciler) buildPoolIPSet(pool *ipamv1beta2.UnifiIPPool, logger logr.Logger) (*netipx.IPSet, error) {
 	if len(pool.Spec.Subnets) == 0 {
 		err := fmt.Errorf("pool has no subnets configured")
 		logger.Error(err, "invalid pool configuration")
@@ -153,7 +153,7 @@ func (r *UnifiIPPoolReconciler) buildPoolIPSet(pool *ipamv1alpha1.UnifiIPPool, l
 	return poolIPSet, nil
 }
 
-func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *ipamv1alpha1.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddress, logger logr.Logger) (ctrl.Result, error) {
+func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *ipamv1beta2.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddress, logger logr.Logger) (ctrl.Result, error) {
 	pool.Status.Addresses = poolutil.ComputePoolStatus(poolIPSet, addressesInUse, pool.Namespace)
 
 	if len(addressesInUse) > 0 {
@@ -192,7 +192,7 @@ func (r *UnifiIPPoolReconciler) ipAddressToUnifiIPPool(_ context.Context, obj cl
 	// Only reconcile if the address references a UnifiIPPool.
 	if address.Spec.PoolRef.Kind != "UnifiIPPool" ||
 		address.Spec.PoolRef.APIGroup == nil ||
-		*address.Spec.PoolRef.APIGroup != ipamv1alpha1.GroupVersion.Group {
+		*address.Spec.PoolRef.APIGroup != ipamv1beta2.GroupVersion.Group {
 		return nil
 	}
 
@@ -209,7 +209,7 @@ func (r *UnifiIPPoolReconciler) ipAddressToUnifiIPPool(_ context.Context, obj cl
 // SetupWithManager sets up the controller with the Manager.
 func (r *UnifiIPPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&ipamv1alpha1.UnifiIPPool{}).
+		For(&ipamv1beta2.UnifiIPPool{}).
 		Watches(
 			&ipamv1.IPAddress{},
 			handler.EnqueueRequestsFromMapFunc(r.ipAddressToUnifiIPPool),

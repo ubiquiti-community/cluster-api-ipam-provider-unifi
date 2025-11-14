@@ -29,7 +29,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/controllers"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/webhooks"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
@@ -45,7 +45,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(ipamv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(ipamv1beta2.AddToScheme(scheme))
 	utilruntime.Must(ipamv1.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
 }
