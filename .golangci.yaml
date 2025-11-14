@@ -91,10 +91,10 @@ linters:
           alias: apierrors
         - pkg: k8s.io/apimachinery/pkg/util/errors
           alias: kerrors
-        - pkg: sigs.k8s.io/cluster-api/api/v1beta1
-          alias: clusterv1beta1
+        - pkg: sigs.k8s.io/cluster-api/api/core/v1beta2
+          alias: clusterv1beta2
         - pkg: sigs.k8s.io/cluster-api/api/ipam/v1beta2
-          alias: ipamv1
+          alias: ipamv1beta2
         - pkg: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
           alias: v1beta2
     misspell:

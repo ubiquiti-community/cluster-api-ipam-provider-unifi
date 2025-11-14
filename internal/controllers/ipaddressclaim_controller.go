@@ -37,7 +37,7 @@ import (
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/predicates"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 const unifiIPPoolKind = "UnifiIPPool"
@@ -59,7 +59,7 @@ var _ ipamutil.ProviderAdapter = &UnifiProviderAdapter{}
 // UnifiClaimHandler implements the ipamutil.ClaimHandler interface.
 type UnifiClaimHandler struct {
 	client.Client
-	claim *ipamv1beta1.IPAddressClaim
+	claim *ipamv1beta2.IPAddressClaim
 	pool  *v1beta2.UnifiIPPool
 }
 
@@ -82,9 +82,13 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 				predicates.PoolNoLongerEmpty(),
 			),
 		).
-		Owns(&ipamv1beta1.IPAddress{})
+		Owns(&ipamv1beta2.IPAddress{})
 
 	return nil
+}
+
+func (a *UnifiProviderAdapter) ToAdapter() ipamutil.ProviderAdapter {
+	return a
 }
 
 // unifiIPPoolToIPClaims maps UnifiIPPool events to IPAddressClaim reconcile requests.
@@ -95,7 +99,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 	}
 
 	// List all claims in the same namespace that reference this pool.
-	claimList := &ipamv1beta1.IPAddressClaimList{}
+	claimList := &ipamv1beta2.IPAddressClaimList{}
 	if err := a.List(ctx, claimList, client.InNamespace(pool.Namespace)); err != nil {
 		return nil
 	}
@@ -104,8 +108,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 	for _, claim := range claimList.Items {
 		if claim.Spec.PoolRef.Name == pool.Name &&
 			claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
-			claim.Spec.PoolRef.APIGroup != nil &&
-			*claim.Spec.PoolRef.APIGroup == v1beta2.GroupVersion.Group {
+			claim.Spec.PoolRef.APIGroup == v1beta2.GroupVersion.Group {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      claim.Name,
@@ -119,7 +122,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 }
 
 // ClaimHandlerFor returns a ClaimHandler for the given claim.
-func (a *UnifiProviderAdapter) ClaimHandlerFor(_ client.Client, claim *ipamv1beta1.IPAddressClaim) ipamutil.ClaimHandler {
+func (a *UnifiProviderAdapter) ClaimHandlerFor(_ client.Client, claim *ipamv1beta2.IPAddressClaim) ipamutil.ClaimHandler {
 	return &UnifiClaimHandler{
 		Client: a.Client,
 		claim:  claim,
@@ -149,7 +152,7 @@ func (h *UnifiClaimHandler) FetchPool(ctx context.Context) (client.Object, *ctrl
 }
 
 // EnsureAddress ensures that the IPAddress is allocated with a valid address.
-func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1beta1.IPAddress) (*ctrl.Result, error) {
+func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1beta2.IPAddress) (*ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, h.Client, h.pool.Namespace,
@@ -170,7 +173,7 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1be
 	return h.allocateIP(ctx, address, unifiClient, subnetSpec, addressesInUse, logger)
 }
 
-func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta1.IPAddress, addressesInUse []ipamv1beta1.IPAddress) bool {
+func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta2.IPAddress, addressesInUse []ipamv1beta2.IPAddress) bool {
 	for _, addr := range addressesInUse {
 		if addr.Name == address.Name && addr.Namespace == address.Namespace {
 			return true
@@ -244,7 +247,7 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 	return &secret, nil
 }
 
-func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta1.IPAddress, unifiClient *unifi.Client, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta1.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
+func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.Client, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
 	allocation, err := unifiClient.GetOrAllocateIP(
@@ -262,7 +265,7 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta1
 	address.Spec.Address = allocation.IPAddress
 	address.Spec.Gateway = subnetSpec.Gateway
 	if subnetSpec.Prefix != nil && *subnetSpec.Prefix > 0 {
-		address.Spec.Prefix = int(*subnetSpec.Prefix)
+		address.Spec.Prefix = subnetSpec.Prefix
 	}
 
 	logger.Info("allocated IP address",

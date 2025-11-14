@@ -36,8 +36,8 @@ import (
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/webhooks"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
 
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	clusterv1beta2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 var (
@@ -48,8 +48,8 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1beta2.AddToScheme(scheme))
-	utilruntime.Must(ipamv1beta1.AddToScheme(scheme))
-	utilruntime.Must(clusterv1beta1.AddToScheme(scheme))
+	utilruntime.Must(ipamv1beta2.AddToScheme(scheme))
+	utilruntime.Must(clusterv1beta2.AddToScheme(scheme))
 }
 
 type managerConfig struct {
@@ -78,7 +78,7 @@ func parseFlags() *managerConfig {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&config.watchFilterValue, "watch-filter", "",
 		"Label value that the controller watches to reconcile cluster-api objects. "+
-			"Label key is always "+clusterv1beta1.WatchLabel+". If unspecified, the controller watches for all cluster-api objects.")
+			"Label key is always "+clusterv1beta2.WatchLabel+". If unspecified, the controller watches for all cluster-api objects.")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
