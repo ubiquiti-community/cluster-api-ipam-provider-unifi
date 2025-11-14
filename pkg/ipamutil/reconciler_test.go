@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 func TestClaimReconciler_SetupWithManager(t *testing.T) {
@@ -109,7 +109,7 @@ func TestClaimReconciler_reconcileDelete(t *testing.T) {
 		Adapter          ProviderAdapter
 	}
 	type args struct {
-		claim   *ipamv1beta1.IPAddressClaim
+		claim   *ipamv1beta2.IPAddressClaim
 		handler ClaimHandler
 	}
 	tests := []struct {
@@ -216,13 +216,13 @@ func Test_unwrapResult(t *testing.T) {
 
 func TestNewIPAddress(t *testing.T) {
 	type args struct {
-		claim *ipamv1beta1.IPAddressClaim
+		claim *ipamv1beta2.IPAddressClaim
 		pool  client.Object
 	}
 	tests := []struct {
 		name string
 		args args
-		want ipamv1beta1.IPAddress
+		want ipamv1beta2.IPAddress
 	}{
 		// TODO: Add test cases.
 	}
@@ -238,8 +238,8 @@ func TestNewIPAddress(t *testing.T) {
 func Test_ensureIPAddressOwnerReferences(t *testing.T) {
 	type args struct {
 		scheme  *runtime.Scheme
-		address *ipamv1beta1.IPAddress
-		claim   *ipamv1beta1.IPAddressClaim
+		address *ipamv1beta2.IPAddress
+		claim   *ipamv1beta2.IPAddressClaim
 		pool    client.Object
 	}
 	tests := []struct {

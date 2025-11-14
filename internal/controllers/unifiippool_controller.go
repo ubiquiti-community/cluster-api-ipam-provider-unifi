@@ -36,7 +36,7 @@ import (
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 const (
@@ -153,7 +153,7 @@ func (r *UnifiIPPoolReconciler) buildPoolIPSet(pool *v1beta2.UnifiIPPool, logger
 	return poolIPSet, nil
 }
 
-func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1beta2.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta1.IPAddress, logger logr.Logger) (ctrl.Result, error) {
+func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1beta2.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (ctrl.Result, error) {
 	pool.Status.Addresses = poolutil.ComputePoolStatus(poolIPSet, addressesInUse, pool.Namespace)
 
 	if len(addressesInUse) > 0 {
@@ -184,15 +184,14 @@ func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1be
 
 // ipAddressToUnifiIPPool maps IPAddress events to UnifiIPPool reconcile requests.
 func (r *UnifiIPPoolReconciler) ipAddressToUnifiIPPool(_ context.Context, obj client.Object) []ctrl.Request {
-	address, ok := obj.(*ipamv1beta1.IPAddress)
+	address, ok := obj.(*ipamv1beta2.IPAddress)
 	if !ok {
 		return nil
 	}
 
 	// Only reconcile if the address references a UnifiIPPool.
 	if address.Spec.PoolRef.Kind != "UnifiIPPool" ||
-		address.Spec.PoolRef.APIGroup == nil ||
-		*address.Spec.PoolRef.APIGroup != v1beta2.GroupVersion.Group {
+		address.Spec.PoolRef.APIGroup != v1beta2.GroupVersion.Group {
 		return nil
 	}
 
@@ -211,7 +210,7 @@ func (r *UnifiIPPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1beta2.UnifiIPPool{}).
 		Watches(
-			&ipamv1beta1.IPAddress{},
+			&ipamv1beta2.IPAddress{},
 			handler.EnqueueRequestsFromMapFunc(r.ipAddressToUnifiIPPool),
 		).
 		Complete(r)

@@ -26,7 +26,7 @@ import (
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 func TestListAddressesInUse(t *testing.T) {
@@ -40,7 +40,7 @@ func TestListAddressesInUse(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    []ipamv1beta1.IPAddress
+		want    []ipamv1beta2.IPAddress
 		wantErr bool
 	}{
 		// TODO: Add test cases.
@@ -141,7 +141,7 @@ func TestFindNextAvailableIP(t *testing.T) {
 func TestComputePoolStatus(t *testing.T) {
 	type args struct {
 		poolIPSet      *netipx.IPSet
-		addressesInUse []ipamv1beta1.IPAddress
+		addressesInUse []ipamv1beta2.IPAddress
 		poolNamespace  string
 	}
 	tests := []struct {

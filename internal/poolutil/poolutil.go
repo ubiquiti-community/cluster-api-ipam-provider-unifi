@@ -26,12 +26,12 @@ import (
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 // ListAddressesInUse returns all IPAddresses that reference the given pool.
-func ListAddressesInUse(ctx context.Context, c client.Client, namespace, poolName, poolKind, poolAPIGroup string) ([]ipamv1beta1.IPAddress, error) {
-	addressList := &ipamv1beta1.IPAddressList{}
+func ListAddressesInUse(ctx context.Context, c client.Client, namespace, poolName, poolKind, poolAPIGroup string) ([]ipamv1beta2.IPAddress, error) {
+	addressList := &ipamv1beta2.IPAddressList{}
 
 	// List addresses in the same namespace as the pool (or cluster-wide if no namespace).
 	if namespace != "" {
@@ -45,12 +45,9 @@ func ListAddressesInUse(ctx context.Context, c client.Client, namespace, poolNam
 	}
 
 	// Filter addresses that reference this pool.
-	inUse := make([]ipamv1beta1.IPAddress, 0)
+	inUse := make([]ipamv1beta2.IPAddress, 0)
 	for _, address := range addressList.Items {
-		poolRefAPIGroup := ""
-		if address.Spec.PoolRef.APIGroup != nil {
-			poolRefAPIGroup = *address.Spec.PoolRef.APIGroup
-		}
+		poolRefAPIGroup := address.Spec.PoolRef.APIGroup
 		if address.Spec.PoolRef.Name == poolName &&
 			address.Spec.PoolRef.Kind == poolKind &&
 			poolRefAPIGroup == poolAPIGroup {
@@ -174,7 +171,7 @@ func FindNextAvailableIP(poolIPSet, inUseIPSet *netipx.IPSet) (string, error) {
 }
 
 // ComputePoolStatus computes the status summary for a pool.
-func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta1.IPAddress, poolNamespace string) *v1beta2.IPAddressStatusSummary {
+func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta2.IPAddress, poolNamespace string) *v1beta2.IPAddressStatusSummary {
 	if poolIPSet == nil {
 		return &v1beta2.IPAddressStatusSummary{}
 	}
@@ -229,7 +226,7 @@ func computeTotalAddresses(poolIPSet *netipx.IPSet) int {
 	return totalCount
 }
 
-func computeAddressUsage(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta1.IPAddress, poolNamespace string) (used, outOfRange int) {
+func computeAddressUsage(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta2.IPAddress, poolNamespace string) (used, outOfRange int) {
 	for _, addr := range addressesInUse {
 		if poolNamespace != "" && addr.Namespace != poolNamespace {
 			continue

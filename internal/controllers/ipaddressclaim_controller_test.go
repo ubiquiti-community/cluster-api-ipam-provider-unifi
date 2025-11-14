@@ -28,7 +28,7 @@ import (
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 func TestUnifiProviderAdapter_SetupWithManager(t *testing.T) {
@@ -91,7 +91,7 @@ func TestUnifiProviderAdapter_ClaimHandlerFor(t *testing.T) {
 	}
 	type args struct {
 		in0   client.Client
-		claim *ipamv1beta1.IPAddressClaim
+		claim *ipamv1beta2.IPAddressClaim
 	}
 	tests := []struct {
 		name   string
@@ -116,7 +116,7 @@ func TestUnifiProviderAdapter_ClaimHandlerFor(t *testing.T) {
 func TestUnifiClaimHandler_FetchPool(t *testing.T) {
 	type fields struct {
 		Client client.Client
-		claim  *ipamv1beta1.IPAddressClaim
+		claim  *ipamv1beta2.IPAddressClaim
 		pool   *v1beta2.UnifiIPPool
 	}
 	type args struct{}
@@ -155,11 +155,11 @@ func TestUnifiClaimHandler_FetchPool(t *testing.T) {
 func TestUnifiClaimHandler_EnsureAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
-		claim  *ipamv1beta1.IPAddressClaim
+		claim  *ipamv1beta2.IPAddressClaim
 		pool   *v1beta2.UnifiIPPool
 	}
 	type args struct {
-		address *ipamv1beta1.IPAddress
+		address *ipamv1beta2.IPAddress
 	}
 	tests := []struct {
 		name    string
@@ -192,7 +192,7 @@ func TestUnifiClaimHandler_EnsureAddress(t *testing.T) {
 func TestUnifiClaimHandler_ReleaseAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
-		claim  *ipamv1beta1.IPAddressClaim
+		claim  *ipamv1beta2.IPAddressClaim
 		pool   *v1beta2.UnifiIPPool
 	}
 	type args struct{}

@@ -31,7 +31,7 @@ import (
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 const (
@@ -333,7 +333,7 @@ func buildNewPoolIPSet(newPool *v1beta2.UnifiIPPool) (*netipx.IPSet, error) {
 	return newIPSet, nil
 }
 
-func findOrphanedIPs(addresses []ipamv1beta1.IPAddress, newIPSet *netipx.IPSet) []string {
+func findOrphanedIPs(addresses []ipamv1beta2.IPAddress, newIPSet *netipx.IPSet) []string {
 	var orphanedIPs []string
 	for _, addr := range addresses {
 		if addr.Spec.Address == "" {

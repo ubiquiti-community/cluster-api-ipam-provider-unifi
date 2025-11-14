@@ -25,7 +25,7 @@ import (
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
-	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 func TestNewClient(t *testing.T) {
@@ -126,7 +126,7 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 		macAddress     string
 		hostname       string
 		poolSpec       *v1beta2.SubnetSpec
-		addressesInUse []ipamv1beta1.IPAddress
+		addressesInUse []ipamv1beta2.IPAddress
 	}
 	tests := []struct {
 		name    string
@@ -163,7 +163,7 @@ func TestClient_allocateNextIP(t *testing.T) {
 	type args struct {
 		network        *unifi.Network
 		subnetSpec     *v1beta2.SubnetSpec
-		addressesInUse []ipamv1beta1.IPAddress
+		addressesInUse []ipamv1beta2.IPAddress
 	}
 	tests := []struct {
 		name    string
