@@ -1,19 +1,3 @@
-// Copyright 2024.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-package v1alpha1
-
 /*
 Copyright 2024.
 
@@ -30,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+package v1beta2
+
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 // UnifiIPPoolSpec defines the desired state of UnifiIPPool.
@@ -70,7 +54,7 @@ type SubnetSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=32
-	Prefix int `json:"prefix"`
+	Prefix *int32 `json:"prefix"`
 
 	// ExcludeRanges is a list of IP ranges to exclude from allocation
 	// Format: "start-end" (e.g., "192.168.1.1-192.168.1.10")
@@ -88,9 +72,9 @@ type UnifiIPPoolStatus struct {
 	// +optional.
 	Addresses *IPAddressStatusSummary `json:"addresses,omitempty"`
 
-	// Conditions defines current state of the UnifiIPPool
+	// Conditions defines current state of the UnifiIPPool using metav1.Conditions
 	// +optional.
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// LastSyncTime is the last time the pool was successfully synced
 	// +optional.
@@ -100,38 +84,26 @@ type UnifiIPPoolStatus struct {
 // IPAddressStatusSummary provides summary statistics about IP address allocation.
 type IPAddressStatusSummary struct {
 	// Total is the total number of addresses in the pool.
-	Total int `json:"total"`
+	// +optional.
+	Total *int32 `json:"total,omitempty"`
 
 	// Used is the number of addresses currently allocated.
-	Used int `json:"used"`
+	// +optional.
+	Used *int32 `json:"used,omitempty"`
 
 	// Free is the number of addresses available for allocation.
-	Free int `json:"free"`
+	// +optional.
+	Free *int32 `json:"free,omitempty"`
 
 	// OutOfRange is the number of addresses allocated outside the pool's range.
-	OutOfRange int `json:"outOfRange"`
-}
-
-// IPAddressStatus tracks an allocated IP address (for backward compatibility).
-type IPAddressStatus struct {
-	// Address is the allocated IP address.
-	Address string `json:"address"`
-
-	// ClaimRef is a reference to the IPAddressClaim.
-	ClaimRef corev1.ObjectReference `json:"claimRef"`
-
-	// MacAddress is the MAC address associated with this IP (if available)
 	// +optional.
-	MacAddress string `json:"macAddress,omitempty"`
-
-	// Hostname is the hostname associated with this IP (if available)
-	// +optional.
-	Hostname string `json:"hostname,omitempty"`
+	OutOfRange *int32 `json:"outOfRange,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=unifiippools,scope=Namespaced,categories=cluster-api
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="NetworkID",type="string",JSONPath=".spec.networkId",description="Unifi network ID"
 // +kubebuilder:printcolumn:name="Total",type="integer",JSONPath=".status.addresses.total",description="Total addresses in pool"
 // +kubebuilder:printcolumn:name="Used",type="integer",JSONPath=".status.addresses.used",description="Number of allocated addresses"

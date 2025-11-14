@@ -24,7 +24,7 @@ import (
 	"go4.org/netipx"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
@@ -87,7 +87,7 @@ func TestAddressesToIPSet(t *testing.T) {
 
 func TestPoolSpecToIPSet(t *testing.T) {
 	type args struct {
-		poolSpec *ipamv1alpha1.SubnetSpec
+		poolSpec *ipamv1beta2.SubnetSpec
 	}
 	tests := []struct {
 		name    string
@@ -147,7 +147,7 @@ func TestComputePoolStatus(t *testing.T) {
 	tests := []struct {
 		name string
 		args args
-		want *ipamv1alpha1.IPAddressStatusSummary
+		want *ipamv1beta2.IPAddressStatusSummary
 	}{
 		// TODO: Add test cases.
 	}

@@ -29,7 +29,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/controllers"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/webhooks"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
@@ -45,7 +45,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(ipamv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(ipamv1beta2.AddToScheme(scheme))
 	utilruntime.Must(ipamv1.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
 }
@@ -55,13 +55,18 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var watchFilterValue string
+	var enableWebhook bool
 	var webhookPort int
 	var webhookCertDir string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server binds to.")
-	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "The directory that contains the webhook server key and certificate.")
+	flag.BoolVar(&enableWebhook, "enable-webhook", false,
+		"Enable webhook server for validation and mutation. "+
+			"When disabled, the provider works without admission webhooks (recommended for CAPI Operator).")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server binds to (only used when --enable-webhook=true).")
+	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs",
+		"The directory that contains the webhook server key and certificate (only used when --enable-webhook=true).")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -77,18 +82,28 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:  scheme,
-		Metrics: metricsserver.Options{BindAddress: metricsAddr},
-		WebhookServer: webhook.NewServer(webhook.Options{
-			Port:    webhookPort,
-			CertDir: webhookCertDir,
-		}),
+	// Build manager options
+	mgrOptions := ctrl.Options{
+		Scheme:                  scheme,
+		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "unifi-ipam-controller-leader-election",
 		LeaderElectionNamespace: "",
-	})
+	}
+
+	// Conditionally enable webhook server
+	if enableWebhook {
+		setupLog.Info("webhook server enabled", "port", webhookPort, "certDir", webhookCertDir)
+		mgrOptions.WebhookServer = webhook.NewServer(webhook.Options{
+			Port:    webhookPort,
+			CertDir: webhookCertDir,
+		})
+	} else {
+		setupLog.Info("webhook server disabled - running without admission webhooks")
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -124,14 +139,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup webhooks.
-	if err = (&webhooks.UnifiIPPoolWebhook{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "UnifiIPPool")
-		os.Exit(1)
-	}
-	if err = (&webhooks.UnifiInstanceWebhook{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "UnifiInstance")
-		os.Exit(1)
+	// Setup webhooks if enabled.
+	if enableWebhook {
+		setupLog.Info("setting up webhooks")
+		if err = (&webhooks.UnifiIPPoolWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "UnifiIPPool")
+			os.Exit(1)
+		}
+		if err = (&webhooks.UnifiInstanceWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "UnifiInstance")
+			os.Exit(1)
+		}
 	}
 
 	// Add health checks.

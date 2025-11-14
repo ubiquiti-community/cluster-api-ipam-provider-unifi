@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 
 	"sigs.k8s.io/cluster-api/util/annotations"
 )
@@ -43,8 +43,8 @@ func ResourceTransitionedToUnpaused() predicate.Predicate {
 func PoolNoLongerEmpty() predicate.Predicate {
 	return predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPool, oldOK := e.ObjectOld.(*ipamv1alpha1.UnifiIPPool)
-			newPool, newOK := e.ObjectNew.(*ipamv1alpha1.UnifiIPPool)
+			oldPool, oldOK := e.ObjectOld.(*ipamv1beta2.UnifiIPPool)
+			newPool, newOK := e.ObjectNew.(*ipamv1beta2.UnifiIPPool)
 
 			if !oldOK || !newOK {
 				return false
@@ -53,9 +53,12 @@ func PoolNoLongerEmpty() predicate.Predicate {
 			if oldPool.Status.Addresses == nil || newPool.Status.Addresses == nil {
 				return false
 			}
+			if oldPool.Status.Addresses.Free == nil || newPool.Status.Addresses.Free == nil {
+				return false
+			}
 
 			// Trigger if old had 0 free and new has > 0 free.
-			return oldPool.Status.Addresses.Free == 0 && newPool.Status.Addresses.Free > 0
+			return *oldPool.Status.Addresses.Free == 0 && *newPool.Status.Addresses.Free > 0
 		},
 	}
 }

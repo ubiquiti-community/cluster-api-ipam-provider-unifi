@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 func TestUnifiIPPoolWebhook_SetupWebhookWithManager(t *testing.T) {
@@ -189,7 +189,7 @@ func TestUnifiIPPoolWebhook_validate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		pool *ipamv1alpha1.UnifiIPPool
+		pool *ipamv1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string
@@ -213,7 +213,7 @@ func TestUnifiIPPoolWebhook_validate(t *testing.T) {
 
 func Test_validateSubnet(t *testing.T) {
 	type args struct {
-		subnet  *ipamv1alpha1.SubnetSpec
+		subnet  *ipamv1beta2.SubnetSpec
 		fldPath *field.Path
 	}
 	tests := []struct {
@@ -237,8 +237,8 @@ func TestUnifiIPPoolWebhook_validateUpdate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		oldPool *ipamv1alpha1.UnifiIPPool
-		newPool *ipamv1alpha1.UnifiIPPool
+		oldPool *ipamv1beta2.UnifiIPPool
+		newPool *ipamv1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string

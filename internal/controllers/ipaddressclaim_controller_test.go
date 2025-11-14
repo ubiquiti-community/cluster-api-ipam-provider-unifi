@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
 
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
@@ -117,7 +117,7 @@ func TestUnifiClaimHandler_FetchPool(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1.IPAddressClaim
-		pool   *ipamv1alpha1.UnifiIPPool
+		pool   *ipamv1beta2.UnifiIPPool
 	}
 	type args struct{}
 	tests := []struct {
@@ -156,7 +156,7 @@ func TestUnifiClaimHandler_EnsureAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1.IPAddressClaim
-		pool   *ipamv1alpha1.UnifiIPPool
+		pool   *ipamv1beta2.UnifiIPPool
 	}
 	type args struct {
 		address *ipamv1.IPAddress
@@ -193,7 +193,7 @@ func TestUnifiClaimHandler_ReleaseAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1.IPAddressClaim
-		pool   *ipamv1alpha1.UnifiIPPool
+		pool   *ipamv1beta2.UnifiIPPool
 	}
 	type args struct{}
 	tests := []struct {

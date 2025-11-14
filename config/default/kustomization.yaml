@@ -14,7 +14,8 @@ resources:
   - ../crd
   - ../rbac
   - ../manager
-  - ../webhook
+  # [WEBHOOK] Uncomment to enable webhook resources (requires --enable-webhook flag in manager)
+  # - ../webhook
 
 # Patches
 patches:
@@ -23,45 +24,36 @@ patches:
   # endpoint w/o any authn/z, please comment the following line.
   - path: manager_auth_proxy_patch.yaml
 
-  # Mount the controller config file for loading manager configurations
-  # through a ComponentConfig type
-  #- path: manager_config_patch.yaml
-
-  # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
-  # crd/kustomization.yaml
-  - path: manager_webhook_patch.yaml
-
-  # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'.
-  # Uncomment 'CERTMANAGER' sections in crd/kustomization.yaml to enable the CA injection in the admission webhooks.
-  # 'CERTMANAGER' needs to be enabled to use ca injection
-  - path: webhookcainjection_patch.yaml
-
-replacements:
-  - source:
-      kind: Service
-      version: v1
-      name: webhook-service
-      fieldPath: .metadata.name
-    targets:
-      - select:
-          kind: MutatingWebhookConfiguration
-        fieldPaths:
-          - .webhooks.*.clientConfig.service.name
-      - select:
-          kind: ValidatingWebhookConfiguration
-        fieldPaths:
-          - .webhooks.*.clientConfig.service.name
-  - source:
-      kind: Service
-      version: v1
-      name: webhook-service
-      fieldPath: .metadata.namespace
-    targets:
-      - select:
-          kind: MutatingWebhookConfiguration
-        fieldPaths:
-          - .webhooks.*.clientConfig.service.namespace
-      - select:
-          kind: ValidatingWebhookConfiguration
-        fieldPaths:
-          - .webhooks.*.clientConfig.service.namespace
+  # [WEBHOOK] Uncomment to enable webhook patches (requires cert-manager and --enable-webhook flag)
+  # - path: manager_webhook_patch.yaml
+  # - path: webhookcainjection_patch.yaml
+# [WEBHOOK] Uncomment to enable webhook certificate injection
+# replacements:
+#   - source:
+#       kind: Service
+#       version: v1
+#       name: webhook-service
+#       fieldPath: .metadata.name
+#     targets:
+#       - select:
+#           kind: MutatingWebhookConfiguration
+#         fieldPaths:
+#           - .webhooks.*.clientConfig.service.name
+#       - select:
+#           kind: ValidatingWebhookConfiguration
+#         fieldPaths:
+#           - .webhooks.*.clientConfig.service.name
+#   - source:
+#       kind: Service
+#       version: v1
+#       name: webhook-service
+#       fieldPath: .metadata.namespace
+#     targets:
+#       - select:
+#           kind: MutatingWebhookConfiguration
+#         fieldPaths:
+#           - .webhooks.*.clientConfig.service.namespace
+#       - select:
+#           kind: ValidatingWebhookConfiguration
+#         fieldPaths:
+#           - .webhooks.*.clientConfig.service.namespace

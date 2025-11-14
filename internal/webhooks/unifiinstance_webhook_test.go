@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	ipamv1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 func TestUnifiInstanceWebhook_SetupWebhookWithManager(t *testing.T) {
@@ -188,7 +188,7 @@ func TestUnifiInstanceWebhook_validate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		instance *ipamv1alpha1.UnifiInstance
+		instance *ipamv1beta2.UnifiInstance
 	}
 	tests := []struct {
 		name    string

@@ -96,20 +96,20 @@ endif
 
 .PHONY: install
 install: generate ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	kubectl kustomize config/crd | kubectl apply -f -
+	go tool kustomize build config/crd | kubectl apply -f -
 
 .PHONY: uninstall
 uninstall: ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config.
-	kubectl kustomize config/crd | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+	go tool kustomize build config/crd | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
 deploy: generate ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && kubectl kustomize edit set image controller=${IMG}
-	kubectl kustomize config/default | kubectl apply -f -
+	go tool kustomize build config/default | kubectl apply -f -
 
 .PHONY: undeploy
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
-	kubectl kustomize config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+	go tool kustomize build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Build Dependencies
 
