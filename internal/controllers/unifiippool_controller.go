@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"go4.org/netipx"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,13 +36,23 @@ import (
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
+	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 
 	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 const (
-	// ProtectPoolFinalizer is used to prevent pool deletion while addresses are allocated.
+	// ProtectPoolFinalizer is added to UnifiIPPool resources that have addresses in use.
 	ProtectPoolFinalizer = "ipam.cluster.x-k8s.io/ProtectPool"
+
+	// DefaultSyncInterval is how often to sync with Unifi controller.
+	DefaultSyncInterval = 10 * time.Minute
+
+	// Condition types for UnifiIPPool status.
+	ConditionNetworkSynced = "NetworkSynced"
+	ConditionReady         = "Ready"
+	ConditionHealthy       = "Healthy"
+	ConditionExhausted     = "Exhausted"
 )
 
 // UnifiIPPoolReconciler reconciles a UnifiIPPool object.
@@ -55,7 +66,10 @@ type UnifiIPPoolReconciler struct {
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=unifiippools/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddresses,verbs=get;list;watch
 
-// Reconcile updates the UnifiIPPool status with address allocation statistics.
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+//
+//nolint:cyclop // Reconciliation logic naturally has higher complexity
 func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -94,7 +108,33 @@ func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	return r.updatePoolStatus(ctx, pool, poolIPSet, addressesInUse, logger)
+	// Perform periodic sync with Unifi to detect configuration drift
+	if err := r.syncWithUnifi(ctx, pool, instance, logger); err != nil {
+		logger.Error(err, "failed to sync with Unifi network")
+		// Don't fail reconciliation on sync errors, but log and continue
+		// The sync will be retried on the next reconciliation
+	}
+
+	if err := r.updatePoolStatus(ctx, pool, poolIPSet, addressesInUse, logger); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Update all conditions
+	r.updateReadyCondition(pool, instance)
+	r.updateHealthyCondition(pool)
+	r.updateExhaustedCondition(pool)
+
+	// Update status with all conditions
+	if err := r.Status().Update(ctx, pool); err != nil {
+		logger.Error(err, "unable to update pool conditions")
+		return ctrl.Result{}, err
+	}
+
+	// Schedule next sync using RequeueAfter
+	nextSync := r.calculateNextSyncInterval(pool)
+
+	logger.V(1).Info("scheduling next Unifi sync", "after", nextSync)
+	return ctrl.Result{RequeueAfter: nextSync}, nil
 }
 
 func (r *UnifiIPPoolReconciler) handleDeletion(ctx context.Context, pool *v1beta2.UnifiIPPool, logger logr.Logger) (ctrl.Result, error) {
@@ -153,14 +193,22 @@ func (r *UnifiIPPoolReconciler) buildPoolIPSet(pool *v1beta2.UnifiIPPool, logger
 	return poolIPSet, nil
 }
 
-func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1beta2.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (ctrl.Result, error) {
+func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1beta2.UnifiIPPool, poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) error {
+	// Compute basic address statistics
 	pool.Status.Addresses = poolutil.ComputePoolStatus(poolIPSet, addressesInUse, pool.Namespace)
 
+	// Calculate capacity metrics
+	pool.Status.Capacity = r.calculateCapacityMetrics(pool.Status.Addresses)
+
+	// Update allocation details
+	pool.Status.AllocationDetails = r.buildAllocationDetails(addressesInUse, pool)
+
+	// Add finalizer if addresses in use
 	if len(addressesInUse) > 0 {
 		if controllerutil.AddFinalizer(pool, ProtectPoolFinalizer) {
 			if err := r.Update(ctx, pool); err != nil {
 				logger.Error(err, "unable to add finalizer")
-				return ctrl.Result{}, err
+				return err
 			}
 		}
 	}
@@ -170,16 +218,89 @@ func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1be
 
 	if err := r.Status().Update(ctx, pool); err != nil {
 		logger.Error(err, "unable to update UnifiIPPool status")
-		return ctrl.Result{}, err
+		return err
 	}
 
 	logger.Info("successfully reconciled UnifiIPPool",
 		"pool", client.ObjectKeyFromObject(pool),
 		"total", pool.Status.Addresses.Total,
 		"used", pool.Status.Addresses.Used,
-		"free", pool.Status.Addresses.Free)
+		"free", pool.Status.Addresses.Free,
+		"utilization", pool.Status.Capacity.UtilizationPercent)
 
-	return ctrl.Result{}, nil
+	return nil
+}
+
+// calculateCapacityMetrics computes pool utilization metrics.
+func (r *UnifiIPPoolReconciler) calculateCapacityMetrics(summary *v1beta2.IPAddressStatusSummary) *v1beta2.PoolCapacity {
+	if summary == nil || summary.Total == nil || *summary.Total == 0 {
+		return &v1beta2.PoolCapacity{}
+	}
+
+	total := *summary.Total
+	used := int32(0)
+	if summary.Used != nil {
+		used = *summary.Used
+	}
+
+	// Calculate utilization percentage
+	utilizationPercent := (used * 100) / total
+	highUtilization := utilizationPercent >= 80
+
+	return &v1beta2.PoolCapacity{
+		UtilizationPercent: &utilizationPercent,
+		HighUtilization:    &highUtilization,
+	}
+}
+
+// buildAllocationDetails creates detailed allocation information from IPAddress list.
+func (r *UnifiIPPoolReconciler) buildAllocationDetails(addressesInUse []ipamv1beta2.IPAddress, _ *v1beta2.UnifiIPPool) *v1beta2.AllocationDetails {
+	if len(addressesInUse) == 0 {
+		return &v1beta2.AllocationDetails{
+			AllocatedIPs: []v1beta2.AllocatedIP{},
+		}
+	}
+
+	details := &v1beta2.AllocationDetails{
+		AllocatedIPs: make([]v1beta2.AllocatedIP, 0, len(addressesInUse)),
+	}
+
+	var firstTime, lastTime *metav1.Time
+
+	for _, addr := range addressesInUse {
+		allocatedIP := v1beta2.AllocatedIP{
+			Address: addr.Spec.Address,
+		}
+
+		// Extract claim name from claim ref
+		if addr.Spec.ClaimRef.Name != "" {
+			allocatedIP.ClaimName = addr.Spec.ClaimRef.Name
+		}
+
+		// Extract cluster name from labels
+		if clusterName, ok := addr.Labels["cluster.x-k8s.io/cluster-name"]; ok {
+			allocatedIP.ClusterName = clusterName
+		}
+
+		// Track allocation time
+		creationTime := addr.GetCreationTimestamp()
+		allocatedIP.AllocatedAt = &creationTime
+
+		// Find first and last allocation times
+		if firstTime == nil || creationTime.Before(firstTime) {
+			firstTime = &creationTime
+		}
+		if lastTime == nil || creationTime.After(lastTime.Time) {
+			lastTime = &creationTime
+		}
+
+		details.AllocatedIPs = append(details.AllocatedIPs, allocatedIP)
+	}
+
+	details.FirstAllocationTime = firstTime
+	details.LastAllocationTime = lastTime
+
+	return details
 }
 
 // ipAddressToUnifiIPPool maps IPAddress events to UnifiIPPool reconcile requests.
@@ -203,6 +324,255 @@ func (r *UnifiIPPoolReconciler) ipAddressToUnifiIPPool(_ context.Context, obj cl
 			},
 		},
 	}
+}
+
+// syncWithUnifi performs periodic synchronization with Unifi network configuration.
+// This detects configuration drift and updates the pool's observed state.
+//
+//nolint:cyclop // Network sync logic requires multiple checks
+func (r *UnifiIPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.UnifiIPPool, instance *v1beta2.UnifiInstance, logger logr.Logger) error {
+	// Import unifi client package
+	unifiClient, err := r.createUnifiClient(ctx, instance, pool.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create Unifi client: %w", err)
+	}
+
+	// Sync network configuration from Unifi
+	subnetSpec, err := unifiClient.SyncNetworkToCIDR(ctx, pool.Spec.NetworkID)
+	if err != nil {
+		return fmt.Errorf("failed to sync network config: %w", err)
+	}
+
+	// Get network details for DHCP info
+	network, err := unifiClient.GetNetwork(ctx, pool.Spec.NetworkID)
+	if err != nil {
+		return fmt.Errorf("failed to get network details: %w", err)
+	}
+
+	// Update network info
+	pool.Status.NetworkInfo = &v1beta2.NetworkInfo{
+		Name:         network.Name,
+		Purpose:      network.Purpose,
+		NetworkGroup: network.NetworkGroup,
+	}
+
+	// Add VLAN if configured
+	if network.VLAN != 0 && network.VLAN <= 4094 { // Valid VLAN range
+		vlan := int32(network.VLAN) // #nosec G115 - checked range
+		pool.Status.NetworkInfo.VLAN = &vlan
+	}
+
+	// Add DHCP lease time if DHCP is enabled
+	if network.DHCPDEnabled && network.DHCPDLeaseTime > 0 && network.DHCPDLeaseTime <= 2147483647 {
+		leaseTime := int32(network.DHCPDLeaseTime) // #nosec G115 - checked range
+		pool.Status.NetworkInfo.DHCPLeaseTime = &leaseTime
+	}
+
+	// Update observed network configuration
+	pool.Status.ObservedNetworkConfiguration = &v1beta2.ObservedNetworkConfig{
+		CIDR:        subnetSpec.CIDR,
+		Gateway:     subnetSpec.Gateway,
+		DHCPEnabled: &network.DHCPDEnabled,
+	}
+
+	if network.DHCPDEnabled && network.DHCPDStart != "" && network.DHCPDStop != "" {
+		pool.Status.ObservedNetworkConfiguration.DHCPRange = &v1beta2.DHCPRangeConfig{
+			Start: network.DHCPDStart,
+			Stop:  network.DHCPDStop,
+		}
+	}
+
+	// Detect configuration drift
+	driftDetected := r.detectConfigurationDrift(pool, subnetSpec, logger)
+
+	// Update sync condition
+	r.updateSyncCondition(pool, driftDetected, err)
+
+	// Update last sync time
+	now := metav1.Now()
+	pool.Status.LastSyncTime = &now
+
+	if err := r.Status().Update(ctx, pool); err != nil {
+		return fmt.Errorf("failed to update pool status: %w", err)
+	}
+
+	if driftDetected {
+		logger.Info("configuration drift detected between pool and Unifi network",
+			"pool_cidr", pool.Spec.Subnets[0].CIDR,
+			"unifi_cidr", subnetSpec.CIDR)
+	}
+
+	return nil
+}
+
+// detectConfigurationDrift compares pool configuration with Unifi network state.
+func (r *UnifiIPPoolReconciler) detectConfigurationDrift(pool *v1beta2.UnifiIPPool, unifiSpec *v1beta2.SubnetSpec, logger logr.Logger) bool {
+	if len(pool.Spec.Subnets) == 0 {
+		return false
+	}
+
+	poolSubnet := pool.Spec.Subnets[0]
+	driftDetected := false
+
+	// Check CIDR drift
+	if poolSubnet.CIDR != unifiSpec.CIDR {
+		logger.Info("CIDR drift detected", "pool", poolSubnet.CIDR, "unifi", unifiSpec.CIDR)
+		driftDetected = true
+	}
+
+	// Check gateway drift
+	if poolSubnet.Gateway != unifiSpec.Gateway {
+		logger.Info("Gateway drift detected", "pool", poolSubnet.Gateway, "unifi", unifiSpec.Gateway)
+		driftDetected = true
+	}
+
+	return driftDetected
+}
+
+// updateSyncCondition updates the NetworkSynced condition based on sync results.
+func (r *UnifiIPPoolReconciler) updateSyncCondition(pool *v1beta2.UnifiIPPool, driftDetected bool, syncErr error) {
+	condition := metav1.Condition{
+		Type:               ConditionNetworkSynced,
+		Status:             metav1.ConditionTrue,
+		Reason:             "SyncSucceeded",
+		Message:            "Pool configuration is synchronized with Unifi network",
+		ObservedGeneration: pool.Generation,
+	}
+
+	if syncErr != nil {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "SyncFailed"
+		condition.Message = fmt.Sprintf("Failed to sync with Unifi: %v", syncErr)
+	} else if driftDetected {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "ConfigurationDrift"
+		condition.Message = "Pool configuration differs from Unifi network configuration"
+	}
+
+	r.setCondition(pool, condition)
+}
+
+// updateReadyCondition updates the Ready condition based on pool operational state.
+func (r *UnifiIPPoolReconciler) updateReadyCondition(pool *v1beta2.UnifiIPPool, instance *v1beta2.UnifiInstance) {
+	condition := metav1.Condition{
+		Type:               ConditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "PoolReady",
+		Message:            "Pool is ready for IP allocation",
+		ObservedGeneration: pool.Generation,
+	}
+
+	// Check if instance is ready
+	if instance.Status.Ready == nil || !*instance.Status.Ready {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "InstanceNotReady"
+		condition.Message = "Unifi instance is not ready"
+	}
+
+	// Check if pool has subnets configured
+	if len(pool.Spec.Subnets) == 0 {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "NoSubnets"
+		condition.Message = "Pool has no subnets configured"
+	}
+
+	r.setCondition(pool, condition)
+}
+
+// updateHealthyCondition updates the Healthy condition based on allocation health.
+func (r *UnifiIPPoolReconciler) updateHealthyCondition(pool *v1beta2.UnifiIPPool) {
+	condition := metav1.Condition{
+		Type:               ConditionHealthy,
+		Status:             metav1.ConditionTrue,
+		Reason:             "PoolHealthy",
+		Message:            "Pool is operating normally",
+		ObservedGeneration: pool.Generation,
+	}
+
+	// Check for drift
+	for _, cond := range pool.Status.Conditions {
+		if cond.Type == ConditionNetworkSynced && cond.Status == metav1.ConditionFalse {
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = cond.Reason
+			condition.Message = fmt.Sprintf("Pool unhealthy: %s", cond.Message)
+			break
+		}
+	}
+
+	r.setCondition(pool, condition)
+}
+
+// updateExhaustedCondition updates the Exhausted condition based on capacity.
+func (r *UnifiIPPoolReconciler) updateExhaustedCondition(pool *v1beta2.UnifiIPPool) {
+	condition := metav1.Condition{
+		Type:               ConditionExhausted,
+		Status:             metav1.ConditionFalse,
+		Reason:             "CapacityAvailable",
+		Message:            "Pool has available capacity",
+		ObservedGeneration: pool.Generation,
+	}
+
+	// Check if pool is exhausted or nearly exhausted
+	if pool.Status.Capacity != nil && pool.Status.Capacity.UtilizationPercent != nil {
+		utilization := *pool.Status.Capacity.UtilizationPercent
+		if utilization >= 100 {
+			condition.Status = metav1.ConditionTrue
+			condition.Reason = "PoolExhausted"
+			condition.Message = "Pool has no available capacity"
+		} else if utilization >= 90 {
+			condition.Status = metav1.ConditionTrue
+			condition.Reason = "NearlyExhausted"
+			condition.Message = fmt.Sprintf("Pool is %d%% utilized - approaching exhaustion", utilization)
+		}
+	}
+
+	r.setCondition(pool, condition)
+}
+
+// setCondition updates or appends a condition to the pool status.
+func (r *UnifiIPPoolReconciler) setCondition(pool *v1beta2.UnifiIPPool, condition metav1.Condition) {
+	for i, existing := range pool.Status.Conditions {
+		if existing.Type == condition.Type {
+			pool.Status.Conditions[i] = condition
+			return
+		}
+	}
+	pool.Status.Conditions = append(pool.Status.Conditions, condition)
+}
+
+// calculateNextSyncInterval determines when the next sync should occur.
+func (r *UnifiIPPoolReconciler) calculateNextSyncInterval(pool *v1beta2.UnifiIPPool) time.Duration {
+	// Use default sync interval
+	// Could be made configurable via pool annotations in the future
+	return DefaultSyncInterval
+}
+
+// createUnifiClient creates a Unifi client from instance credentials.
+func (r *UnifiIPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1beta2.UnifiInstance, namespace string) (*unifi.Client, error) {
+	// Get credentials secret
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      instance.Spec.CredentialsRef.Name,
+		Namespace: namespace,
+	}, &secret); err != nil {
+		return nil, fmt.Errorf("failed to get credentials secret: %w", err)
+	}
+
+	site := DefaultUnifiSite
+	if instance.Spec.Site != nil {
+		site = *instance.Spec.Site
+	}
+	insecure := false
+	if instance.Spec.Insecure != nil {
+		insecure = *instance.Spec.Insecure
+	}
+
+	return unifi.NewClient(unifi.Config{
+		Host:     instance.Spec.Host,
+		APIKey:   string(secret.Data["apiKey"]),
+		Site:     site,
+		Insecure: insecure,
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.

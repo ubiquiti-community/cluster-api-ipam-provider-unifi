@@ -193,7 +193,7 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client,
 		return nil, nil, err
 	}
 
-	site := "default"
+	site := DefaultUnifiSite
 	if instance.Spec.Site != nil {
 		site = *instance.Spec.Site
 	}

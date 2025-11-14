@@ -34,6 +34,11 @@ import (
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 )
 
+const (
+	// DefaultUnifiSite is the default Unifi site name when not specified.
+	DefaultUnifiSite = "default"
+)
+
 // UnifiInstanceReconciler reconciles a UnifiInstance object.
 type UnifiInstanceReconciler struct {
 	client.Client
@@ -92,7 +97,7 @@ func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *v1bet
 }
 
 func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.Client, error) {
-	site := "default"
+	site := DefaultUnifiSite
 	if instance.Spec.Site != nil {
 		site = *instance.Spec.Site
 	}

@@ -72,13 +72,59 @@ type UnifiIPPoolStatus struct {
 	// +optional.
 	Addresses *IPAddressStatusSummary `json:"addresses,omitempty"`
 
+	// Capacity provides utilization metrics for the pool
+	// +optional.
+	Capacity *PoolCapacity `json:"capacity,omitempty"`
+
+	// NetworkInfo contains information about the Unifi network
+	// +optional.
+	NetworkInfo *NetworkInfo `json:"networkInfo,omitempty"`
+
+	// AllocationDetails tracks detailed allocation information
+	// +optional.
+	AllocationDetails *AllocationDetails `json:"allocationDetails,omitempty"`
+
 	// Conditions defines current state of the UnifiIPPool using metav1.Conditions
 	// +optional.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// LastSyncTime is the last time the pool was successfully synced
+	// LastSyncTime is the last time the pool was successfully synced with Unifi
 	// +optional.
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+
+	// ObservedNetworkConfiguration contains the network config last observed from Unifi
+	// Used to detect drift between Kubernetes and Unifi state
+	// +optional.
+	ObservedNetworkConfiguration *ObservedNetworkConfig `json:"observedNetworkConfig,omitempty"`
+}
+
+// ObservedNetworkConfig represents the network configuration observed from Unifi.
+// This is used to detect configuration drift.
+type ObservedNetworkConfig struct {
+	// CIDR is the subnet observed from Unifi
+	// +optional.
+	CIDR string `json:"cidr,omitempty"`
+
+	// Gateway is the gateway IP observed from Unifi
+	// +optional.
+	Gateway string `json:"gateway,omitempty"`
+
+	// DHCPEnabled indicates if DHCP is enabled on the network
+	// +optional.
+	DHCPEnabled *bool `json:"dhcpEnabled,omitempty"`
+
+	// DHCPRange contains the DHCP start and stop IPs
+	// +optional.
+	DHCPRange *DHCPRangeConfig `json:"dhcpRange,omitempty"`
+}
+
+// DHCPRangeConfig represents DHCP range configuration.
+type DHCPRangeConfig struct {
+	// Start is the first IP in the DHCP range
+	Start string `json:"start,omitempty"`
+
+	// Stop is the last IP in the DHCP range
+	Stop string `json:"stop,omitempty"`
 }
 
 // IPAddressStatusSummary provides summary statistics about IP address allocation.
@@ -100,23 +146,101 @@ type IPAddressStatusSummary struct {
 	OutOfRange *int32 `json:"outOfRange,omitempty"`
 }
 
+// PoolCapacity provides pool utilization metrics.
+type PoolCapacity struct {
+	// UtilizationPercent is the percentage of pool capacity in use (0-100)
+	// +optional.
+	UtilizationPercent *int32 `json:"utilizationPercent,omitempty"`
+
+	// ExhaustedAt is the projected time when the pool will be exhausted
+	// based on current allocation rate (if available)
+	// +optional.
+	ExhaustedAt *metav1.Time `json:"exhaustedAt,omitempty"`
+
+	// HighUtilization indicates if the pool is nearing capacity (>80%)
+	// +optional.
+	HighUtilization *bool `json:"highUtilization,omitempty"`
+}
+
+// NetworkInfo contains details about the Unifi network.
+type NetworkInfo struct {
+	// Name is the human-readable name of the Unifi network
+	// +optional.
+	Name string `json:"name,omitempty"`
+
+	// VLAN is the VLAN ID if configured
+	// +optional.
+	VLAN *int32 `json:"vlan,omitempty"`
+
+	// Purpose describes the network purpose (corporate-guest, guest, etc)
+	// +optional.
+	Purpose string `json:"purpose,omitempty"`
+
+	// NetworkGroup is the network group assignment (LAN, WAN, etc)
+	// +optional.
+	NetworkGroup string `json:"networkGroup,omitempty"`
+
+	// DHCPLeaseTime is the DHCP lease duration in seconds
+	// +optional.
+	DHCPLeaseTime *int32 `json:"dhcpLeaseTime,omitempty"`
+}
+
+// AllocationDetails tracks detailed allocation information.
+type AllocationDetails struct {
+	// AllocatedIPs is a list of currently allocated IP addresses
+	// +optional.
+	AllocatedIPs []AllocatedIP `json:"allocatedIPs,omitempty"`
+
+	// FirstAllocationTime is when the first IP was allocated from this pool
+	// +optional.
+	FirstAllocationTime *metav1.Time `json:"firstAllocationTime,omitempty"`
+
+	// LastAllocationTime is when the most recent IP was allocated
+	// +optional.
+	LastAllocationTime *metav1.Time `json:"lastAllocationTime,omitempty"`
+}
+
+// AllocatedIP represents an allocated IP address with metadata.
+type AllocatedIP struct {
+	// Address is the allocated IP address
+	Address string `json:"address,omitempty"`
+
+	// ClaimName is the name of the IPAddressClaim that requested this IP
+	// +optional.
+	ClaimName string `json:"claimName,omitempty"`
+
+	// ClusterName is the cluster that owns this allocation
+	// +optional.
+	ClusterName string `json:"clusterName,omitempty"`
+
+	// MacAddress is the MAC address assigned in Unifi
+	// +optional.
+	MacAddress string `json:"macAddress,omitempty"`
+
+	// AllocatedAt is when this IP was allocated
+	// +optional.
+	AllocatedAt *metav1.Time `json:"allocatedAt,omitempty"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=unifiippools,scope=Namespaced,categories=cluster-api
 // +kubebuilder:storageversion
-// +kubebuilder:printcolumn:name="NetworkID",type="string",JSONPath=".spec.networkId",description="Unifi network ID"
-// +kubebuilder:printcolumn:name="Total",type="integer",JSONPath=".status.addresses.total",description="Total addresses in pool"
-// +kubebuilder:printcolumn:name="Used",type="integer",JSONPath=".status.addresses.used",description="Number of allocated addresses"
-// +kubebuilder:printcolumn:name="Free",type="integer",JSONPath=".status.addresses.free",description="Number of free addresses"
-// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation"
+// +kubebuilder:printcolumn:name="Network",type="string",JSONPath=".status.networkInfo.name",description="Unifi network name"
+// +kubebuilder:printcolumn:name="CIDR",type="string",JSONPath=".spec.subnets[0].cidr",description="Network CIDR"
+// +kubebuilder:printcolumn:name="Used",type="integer",JSONPath=".status.addresses.used",description="Allocated IPs"
+// +kubebuilder:printcolumn:name="Free",type="integer",JSONPath=".status.addresses.free",description="Available IPs"
+// +kubebuilder:printcolumn:name="Utilization",type="string",JSONPath=".status.capacity.utilizationPercent",description="Pool utilization %"
+// +kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.conditions[?(@.type=='NetworkSynced')].status",description="Network sync status"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time since creation"
 
 // UnifiIPPool is the Schema for the unifiippools API.
 type UnifiIPPool struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.ObjectMeta `json:"metadata"`
 
-	Spec   UnifiIPPoolSpec   `json:"spec,omitempty"`
-	Status UnifiIPPoolStatus `json:"status,omitempty"`
+	Spec   UnifiIPPoolSpec   `json:"spec"`
+	Status UnifiIPPoolStatus `json:"status"`
 }
 
 // +kubebuilder:object:root=true

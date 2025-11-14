@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
@@ -124,6 +125,79 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (*unifi.Netwo
 	}
 
 	return nil, fmt.Errorf("network %s not found", networkID)
+}
+
+// SyncNetworkToCIDR retrieves network configuration from Unifi and populates SubnetSpec.
+// This syncs the CIDR, gateway, and optionally calculates prefix and exclude ranges based on DHCP settings.
+//
+//nolint:cyclop // Network configuration sync requires multiple conditional checks
+func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
+	network, err := c.GetNetwork(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate that the network has required DHCP/IP configuration
+	if network.IPSubnet == "" {
+		return nil, fmt.Errorf("network %s has no IP subnet configured", networkID)
+	}
+
+	subnetSpec := &v1beta2.SubnetSpec{
+		CIDR: network.IPSubnet,
+	}
+
+	// Extract gateway - prefer DHCPDGateway if set, otherwise calculate from CIDR
+	if network.DHCPDGateway != "" && network.DHCPDGatewayEnabled {
+		subnetSpec.Gateway = network.DHCPDGateway
+	} else {
+		// Calculate gateway from CIDR (typically .1 of the subnet)
+		gateway, err := calculateGatewayFromCIDR(network.IPSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate gateway: %w", err)
+		}
+		subnetSpec.Gateway = gateway
+	}
+
+	// Calculate prefix from CIDR
+	prefix, err := extractPrefixFromCIDR(network.IPSubnet)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract prefix: %w", err)
+	}
+	subnetSpec.Prefix = &prefix
+
+	// Build exclude ranges from DHCP configuration
+	excludeRanges := make([]string, 0)
+
+	// If DHCP is enabled, exclude IPs outside the DHCP range
+	if network.DHCPDEnabled && network.DHCPDStart != "" && network.DHCPDStop != "" {
+		// Calculate exclude ranges for IPs before DHCP start and after DHCP stop
+		beforeRange, afterRange, err := calculateExcludeRangesFromDHCP(network.IPSubnet, network.DHCPDStart, network.DHCPDStop)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate exclude ranges: %w", err)
+		}
+		if beforeRange != "" {
+			excludeRanges = append(excludeRanges, beforeRange)
+		}
+		if afterRange != "" {
+			excludeRanges = append(excludeRanges, afterRange)
+		}
+	}
+
+	// Add DNS servers if configured
+	if !network.DHCPDDNSEnabled {
+		// DNS not enabled, skip DNS configuration
+	} else {
+		dnsServers := collectDNSServers(network)
+		if len(dnsServers) > 0 {
+			subnetSpec.DNS = dnsServers
+		}
+	}
+
+	if len(excludeRanges) > 0 {
+		subnetSpec.ExcludeRanges = excludeRanges
+	}
+
+	return subnetSpec, nil
 }
 
 // GetOrAllocateIP gets an existing IP or allocates a new one.
@@ -286,4 +360,178 @@ func (c *Client) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress
 		return fmt.Errorf("failed to delete user with MAC %s: %w", macAddress, err)
 	}
 	return nil
+}
+
+// Helper functions for CIDR and network calculations
+
+// calculateGatewayFromCIDR extracts the first usable IP from a CIDR as the gateway.
+// Typically this is .1 for the subnet.
+func calculateGatewayFromCIDR(cidr string) (string, error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", fmt.Errorf("invalid CIDR %s: %w", cidr, err)
+	}
+
+	// Get the network address and add 1 for the gateway
+	netAddr := prefix.Addr()
+	if !netAddr.Is4() {
+		return "", fmt.Errorf("only IPv4 subnets are supported")
+	}
+
+	// Convert to 4-byte array and increment
+	octets := netAddr.As4()
+	octets[3]++ // Increment last octet for .1 address
+
+	gateway := netip.AddrFrom4(octets)
+	return gateway.String(), nil
+}
+
+// extractPrefixFromCIDR returns the prefix length from a CIDR string.
+func extractPrefixFromCIDR(cidr string) (int32, error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid CIDR %s: %w", cidr, err)
+	}
+	// Prefix bits are always 0-32 for IPv4, 0-128 for IPv6
+	return int32(prefix.Bits()), nil // #nosec G115 - prefix bits are within safe range
+}
+
+// calculateExcludeRangesFromDHCP calculates IP ranges to exclude based on DHCP start/stop.
+// Returns ranges before DHCP start and after DHCP stop (excluding network and broadcast).
+func calculateExcludeRangesFromDHCP(cidr, dhcpStart, dhcpStop string) (beforeRange, afterRange string, err error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid CIDR %s: %w", cidr, err)
+	}
+
+	startIP, err := netip.ParseAddr(dhcpStart)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid DHCP start IP %s: %w", dhcpStart, err)
+	}
+
+	stopIP, err := netip.ParseAddr(dhcpStop)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid DHCP stop IP %s: %w", dhcpStop, err)
+	}
+
+	// Get network address (first IP) and broadcast (last IP)
+	netAddr := prefix.Masked().Addr()
+	broadcastAddr := calculateBroadcastAddr(prefix)
+
+	// Calculate first usable IP (network + 1) and last usable IP (broadcast - 1)
+	firstUsable := incrementIP(netAddr)
+	lastUsable := decrementIP(broadcastAddr)
+
+	// Build exclude range before DHCP start (if DHCP doesn't start at first usable)
+	if startIP.Compare(firstUsable) > 0 {
+		// Exclude from firstUsable to (startIP - 1)
+		beforeEnd := decrementIP(startIP)
+		beforeRange = formatIPRange(firstUsable, beforeEnd)
+	}
+
+	// Build exclude range after DHCP stop (if DHCP doesn't end at last usable)
+	if stopIP.Compare(lastUsable) < 0 {
+		// Exclude from (stopIP + 1) to lastUsable
+		afterStart := incrementIP(stopIP)
+		afterRange = formatIPRange(afterStart, lastUsable)
+	}
+
+	return beforeRange, afterRange, nil
+}
+
+// calculateBroadcastAddr calculates the broadcast address for a given prefix.
+func calculateBroadcastAddr(prefix netip.Prefix) netip.Addr {
+	if !prefix.Addr().Is4() {
+		return netip.Addr{} // Only support IPv4 for now
+	}
+
+	addr := prefix.Addr().As4()
+	maskBits := prefix.Bits()
+
+	// Create host mask (inverse of network mask)
+	hostMask := uint32((1 << (32 - maskBits)) - 1)
+
+	// Convert address to uint32
+	ipInt := uint32(addr[0])<<24 | uint32(addr[1])<<16 | uint32(addr[2])<<8 | uint32(addr[3])
+
+	// OR with host mask to get broadcast
+	broadcastInt := ipInt | hostMask
+
+	// Convert back to addr
+	broadcastAddr := netip.AddrFrom4([4]byte{
+		byte(broadcastInt >> 24),
+		byte(broadcastInt >> 16),
+		byte(broadcastInt >> 8),
+		byte(broadcastInt),
+	})
+
+	return broadcastAddr
+}
+
+// incrementIP returns the next IP address.
+func incrementIP(ip netip.Addr) netip.Addr {
+	if !ip.Is4() {
+		return ip // Only support IPv4
+	}
+
+	octets := ip.As4()
+	// Increment with carry
+	for i := 3; i >= 0; i-- {
+		if octets[i] < 255 {
+			octets[i]++ // #nosec G602 - i is bounded by loop condition
+			break
+		}
+		octets[i] = 0 // #nosec G602 - i is bounded by loop condition
+	}
+
+	return netip.AddrFrom4(octets)
+}
+
+// decrementIP returns the previous IP address.
+func decrementIP(ip netip.Addr) netip.Addr {
+	if !ip.Is4() {
+		return ip // Only support IPv4
+	}
+
+	octets := ip.As4()
+	// Decrement with borrow
+	for i := 3; i >= 0; i-- {
+		if octets[i] > 0 {
+			octets[i]-- // #nosec G602 - i is bounded by loop condition
+			break
+		}
+		octets[i] = 255 // #nosec G602 - i is bounded by loop condition
+	}
+
+	return netip.AddrFrom4(octets)
+}
+
+// formatIPRange formats two IP addresses as a CIDR or range string.
+// If they form a valid CIDR block, returns CIDR notation, otherwise returns "start-end".
+func formatIPRange(start, end netip.Addr) string {
+	if !start.Is4() || !end.Is4() {
+		return "" // Only support IPv4
+	}
+
+	// Try to express as CIDR if possible
+	// For simplicity, just return as IP range format
+	return fmt.Sprintf("%s-%s", start.String(), end.String())
+}
+
+// collectDNSServers gathers non-empty DNS server addresses from network configuration.
+func collectDNSServers(network *unifi.Network) []string {
+	dnsServers := make([]string, 0, 4)
+	if network.DHCPDDNS1 != "" {
+		dnsServers = append(dnsServers, network.DHCPDDNS1)
+	}
+	if network.DHCPDDNS2 != "" {
+		dnsServers = append(dnsServers, network.DHCPDDNS2)
+	}
+	if network.DHCPDDNS3 != "" {
+		dnsServers = append(dnsServers, network.DHCPDDNS3)
+	}
+	if network.DHCPDDNS4 != "" {
+		dnsServers = append(dnsServers, network.DHCPDDNS4)
+	}
+	return dnsServers
 }
