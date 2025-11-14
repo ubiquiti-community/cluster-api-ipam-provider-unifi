@@ -24,15 +24,16 @@ import (
 	"go4.org/netipx"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
+
+	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
 
 // ListAddressesInUse returns all IPAddresses that reference the given pool.
-func ListAddressesInUse(ctx context.Context, c client.Client, namespace string, poolName string, poolKind string, poolAPIGroup string) ([]ipamv1.IPAddress, error) {
-	addressList := &ipamv1.IPAddressList{}
+func ListAddressesInUse(ctx context.Context, c client.Client, namespace, poolName, poolKind, poolAPIGroup string) ([]ipamv1beta1.IPAddress, error) {
+	addressList := &ipamv1beta1.IPAddressList{}
 
-	// List addresses in the same namespace as the pool (or cluster-wide if no namespace)
+	// List addresses in the same namespace as the pool (or cluster-wide if no namespace).
 	if namespace != "" {
 		if err := c.List(ctx, addressList, client.InNamespace(namespace)); err != nil {
 			return nil, fmt.Errorf("failed to list addresses: %w", err)
@@ -43,8 +44,8 @@ func ListAddressesInUse(ctx context.Context, c client.Client, namespace string, 
 		}
 	}
 
-	// Filter addresses that reference this pool
-	inUse := make([]ipamv1.IPAddress, 0)
+	// Filter addresses that reference this pool.
+	inUse := make([]ipamv1beta1.IPAddress, 0)
 	for _, address := range addressList.Items {
 		poolRefAPIGroup := ""
 		if address.Spec.PoolRef.APIGroup != nil {
@@ -69,13 +70,13 @@ func AddressesToIPSet(addresses []string) (*netipx.IPSet, error) {
 			continue
 		}
 
-		// Try parsing as a single IP
+		// Try parsing as a single IP.
 		if ip, err := netip.ParseAddr(addr); err == nil {
 			builder.Add(ip)
 			continue
 		}
 
-		// Try parsing as CIDR
+		// Try parsing as CIDR.
 		if prefix, err := netip.ParsePrefix(addr); err == nil {
 			builder.AddPrefix(prefix)
 			continue
@@ -89,14 +90,14 @@ func AddressesToIPSet(addresses []string) (*netipx.IPSet, error) {
 }
 
 // PoolSpecToIPSet converts a SubnetSpec to an IPSet.
-func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
+func PoolSpecToIPSet(poolSpec *v1beta2.SubnetSpec) (*netipx.IPSet, error) {
 	if poolSpec == nil {
 		return nil, fmt.Errorf("pool spec is nil")
 	}
 
 	var builder netipx.IPSetBuilder
 
-	// Parse the CIDR
+	// Parse the CIDR.
 	prefix, err := netip.ParsePrefix(poolSpec.CIDR)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse CIDR %s: %w", poolSpec.CIDR, err)
@@ -104,7 +105,7 @@ func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
 
 	builder.AddPrefix(prefix)
 
-	// Remove gateway from the pool
+	// Remove gateway from the pool.
 	if poolSpec.Gateway != "" {
 		gateway, err := netip.ParseAddr(poolSpec.Gateway)
 		if err != nil {
@@ -113,15 +114,15 @@ func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
 		builder.Remove(gateway)
 	}
 
-	// Remove excluded ranges
+	// Remove excluded ranges.
 	for _, excludeRange := range poolSpec.ExcludeRanges {
-		// Try parsing as CIDR first
+		// Try parsing as CIDR first.
 		if prefix, err := netip.ParsePrefix(excludeRange); err == nil {
 			builder.RemovePrefix(prefix)
 			continue
 		}
 
-		// Try parsing as single IP
+		// Try parsing as single IP.
 		if ip, err := netip.ParseAddr(excludeRange); err == nil {
 			builder.Remove(ip)
 			continue
@@ -129,10 +130,10 @@ func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
 
 		// Try parsing as IP range (start-end format)
 		// For simplicity, we'll skip range parsing for now
-		// A more robust implementation would parse "10.0.0.1-10.0.0.10" format
+		// A more robust implementation would parse "10.0.0.1-10.0.0.10" format.
 	}
 
-	// Remove network and broadcast addresses
+	// Remove network and broadcast addresses.
 	r := netipx.RangeOfPrefix(prefix)
 	builder.Remove(r.From())
 	builder.Remove(r.To())
@@ -142,12 +143,12 @@ func PoolSpecToIPSet(poolSpec *ipamv1alpha1.SubnetSpec) (*netipx.IPSet, error) {
 }
 
 // FindNextAvailableIP finds the next available IP address in the pool.
-func FindNextAvailableIP(poolIPSet *netipx.IPSet, inUseIPSet *netipx.IPSet) (string, error) {
+func FindNextAvailableIP(poolIPSet, inUseIPSet *netipx.IPSet) (string, error) {
 	if poolIPSet == nil || inUseIPSet == nil {
 		return "", fmt.Errorf("IPSet is nil")
 	}
 
-	// Build available IPs by removing in-use IPs from the pool
+	// Build available IPs by removing in-use IPs from the pool.
 	var builder netipx.IPSetBuilder
 	for _, r := range poolIPSet.Ranges() {
 		builder.AddRange(r)
@@ -161,7 +162,7 @@ func FindNextAvailableIP(poolIPSet *netipx.IPSet, inUseIPSet *netipx.IPSet) (str
 		return "", fmt.Errorf("failed to build available IP set: %w", err)
 	}
 
-	// Find the first available IP
+	// Find the first available IP.
 	for _, r := range availableIPSet.Ranges() {
 		from := r.From()
 		if from.IsValid() {
@@ -173,12 +174,47 @@ func FindNextAvailableIP(poolIPSet *netipx.IPSet, inUseIPSet *netipx.IPSet) (str
 }
 
 // ComputePoolStatus computes the status summary for a pool.
-func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddress, poolNamespace string) *ipamv1alpha1.IPAddressStatusSummary {
+func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta1.IPAddress, poolNamespace string) *v1beta2.IPAddressStatusSummary {
 	if poolIPSet == nil {
-		return &ipamv1alpha1.IPAddressStatusSummary{}
+		return &v1beta2.IPAddressStatusSummary{}
 	}
 
-	// Count total addresses in pool
+	totalCount := computeTotalAddresses(poolIPSet)
+	usedCount, outOfRangeCount := computeAddressUsage(poolIPSet, addressesInUse, poolNamespace)
+
+	freeCount := totalCount - usedCount
+	if freeCount < 0 {
+		freeCount = 0
+	}
+
+	// Safely convert to int32 with bounds checking to prevent overflow
+	total := safeIntToInt32(totalCount)
+	used := safeIntToInt32(usedCount)
+	free := safeIntToInt32(freeCount)
+	outOfRange := safeIntToInt32(outOfRangeCount)
+
+	return &v1beta2.IPAddressStatusSummary{
+		Total:      &total,
+		Used:       &used,
+		Free:       &free,
+		OutOfRange: &outOfRange,
+	}
+}
+
+// safeIntToInt32 converts int to int32, capping at int32 max/min values to prevent overflow.
+func safeIntToInt32(i int) int32 {
+	const maxInt32 = 2147483647
+	const minInt32 = -2147483648
+	if i > maxInt32 {
+		return maxInt32
+	}
+	if i < minInt32 {
+		return minInt32
+	}
+	return int32(i)
+}
+
+func computeTotalAddresses(poolIPSet *netipx.IPSet) int {
 	totalCount := 0
 	for _, r := range poolIPSet.Ranges() {
 		from := r.From()
@@ -186,16 +222,15 @@ func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddres
 		if from.Is4() {
 			totalCount += int(to.As4()[3] - from.As4()[3] + 1)
 		} else {
-			// IPv6 - approximate
+			// IPv6 - approximate.
 			totalCount += 1000
 		}
 	}
+	return totalCount
+}
 
-	// Count in-use and out-of-range addresses
-	usedCount := 0
-	outOfRangeCount := 0
+func computeAddressUsage(poolIPSet *netipx.IPSet, addressesInUse []ipamv1beta1.IPAddress, poolNamespace string) (used, outOfRange int) {
 	for _, addr := range addressesInUse {
-		// Only count addresses in the same namespace (or cluster-wide)
 		if poolNamespace != "" && addr.Namespace != poolNamespace {
 			continue
 		}
@@ -210,21 +245,10 @@ func ComputePoolStatus(poolIPSet *netipx.IPSet, addressesInUse []ipamv1.IPAddres
 		}
 
 		if poolIPSet.Contains(ip) {
-			usedCount++
+			used++
 		} else {
-			outOfRangeCount++
+			outOfRange++
 		}
 	}
-
-	freeCount := totalCount - usedCount
-	if freeCount < 0 {
-		freeCount = 0
-	}
-
-	return &ipamv1alpha1.IPAddressStatusSummary{
-		Total:      totalCount,
-		Used:       usedCount,
-		Free:       freeCount,
-		OutOfRange: outOfRangeCount,
-	}
+	return used, outOfRange
 }

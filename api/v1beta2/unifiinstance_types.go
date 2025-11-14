@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta2
 
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// UnifiInstanceSpec defines the desired state of UnifiInstance
+// UnifiInstanceSpec defines the desired state of UnifiInstance.
 type UnifiInstanceSpec struct {
 	// Host is the URL of the Unifi controller
 	// +kubebuilder:validation:Required
@@ -35,43 +35,45 @@ type UnifiInstanceSpec struct {
 	// Site is the Unifi site name (defaults to "default")
 	// +optional
 	// +kubebuilder:default="default"
-	Site string `json:"site,omitempty"`
+	Site *string `json:"site,omitempty"`
 
 	// Insecure allows insecure HTTPS connections (skip TLS verification)
-	// +optional
-	Insecure bool `json:"insecure,omitempty"`
+	// +optional.
+	Insecure *bool `json:"insecure,omitempty"`
 }
 
-// UnifiInstanceStatus defines the observed state of UnifiInstance
+// UnifiInstanceStatus defines the observed state of UnifiInstance.
 type UnifiInstanceStatus struct {
-	// Ready indicates whether the instance is ready for use
-	Ready bool `json:"ready"`
+	// Ready indicates whether the instance is ready for use.
+	// +optional.
+	Ready *bool `json:"ready,omitempty"`
 
-	// Conditions define the current state of the UnifiInstance
-	// +optional
+	// Conditions define the current state of the UnifiInstance using metav1.Conditions
+	// +optional.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// LastSyncTime is the last time the instance was successfully validated
-	// +optional
+	// +optional.
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
 	// FailureReason indicates the reason for any failure
-	// +optional
+	// +optional.
 	FailureReason *string `json:"failureReason,omitempty"`
 
 	// FailureMessage provides details about any failure
-	// +optional
+	// +optional.
 	FailureMessage *string `json:"failureMessage,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=unifiinstances,scope=Namespaced
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=`.status.ready`
 // +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// UnifiInstance is the Schema for the unifiinstances API
+// UnifiInstance is the Schema for the unifiinstances API.
 type UnifiInstance struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -82,7 +84,7 @@ type UnifiInstance struct {
 
 // +kubebuilder:object:root=true
 
-// UnifiInstanceList contains a list of UnifiInstance
+// UnifiInstanceList contains a list of UnifiInstance.
 type UnifiInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

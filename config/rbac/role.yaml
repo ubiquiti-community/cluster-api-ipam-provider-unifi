@@ -13,9 +13,9 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ipam.cluster.x-k8s.io
+  - cluster.x-k8s.io
   resources:
-  - ipaddresses
+  - clusters
   verbs:
   - get
   - list
@@ -23,6 +23,36 @@ rules:
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
+  - ipaddressclaims
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddressclaims/finalizers
+  - ipaddresses/finalizers
+  - unifiinstances/finalizers
+  - unifiippools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddressclaims/status
+  - unifiinstances/status
+  - unifiippools/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddresses
   - unifiinstances
   - unifiippools
   verbs:
@@ -33,19 +63,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - ipam.cluster.x-k8s.io
-  resources:
-  - unifiinstances/finalizers
-  - unifiippools/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ipam.cluster.x-k8s.io
-  resources:
-  - unifiinstances/status
-  - unifiippools/status
-  verbs:
-  - get
-  - patch
-  - update

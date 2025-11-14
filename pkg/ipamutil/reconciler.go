@@ -37,8 +37,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	ipamv1beta1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 	clusterutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -69,7 +69,7 @@ type ProviderAdapter interface {
 	// implementation to extend the controller configuration.
 	SetupWithManager(context.Context, *builder.Builder) error
 	// ClaimHandlerFor is called during reconciliation to get a ClaimHandler for the reconciled [ipamv1.IPAddressClaim].
-	ClaimHandlerFor(client.Client, *ipamv1.IPAddressClaim) ClaimHandler
+	ClaimHandlerFor(client.Client, *ipamv1beta1.IPAddressClaim) ClaimHandler
 }
 
 // ClaimHandler knows how to allocate and release IP addresses for a specific provider.
@@ -77,7 +77,7 @@ type ClaimHandler interface {
 	// FetchPool is called to fetch the pool referenced by the claim.
 	FetchPool(ctx context.Context) (client.Object, *ctrl.Result, error)
 	// EnsureAddress is called to make sure that the IPAddress.Spec is correct and the address is allocated.
-	EnsureAddress(ctx context.Context, address *ipamv1.IPAddress) (*ctrl.Result, error)
+	EnsureAddress(ctx context.Context, address *ipamv1beta1.IPAddress) (*ctrl.Result, error)
 	// ReleaseAddress is called to release the ip address that was allocated for the claim.
 	ReleaseAddress(ctx context.Context) (*ctrl.Result, error)
 }
@@ -88,21 +88,21 @@ func (r *ClaimReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager
 		return fmt.Errorf("error setting the manager: Adapter is nil")
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &ipamv1.IPAddressClaim{}, "clusterName", indexClusterName); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &ipamv1beta1.IPAddressClaim{}, "clusterName", indexClusterName); err != nil {
 		return fmt.Errorf("failed to register indexer for IPAddressClaim: %w", err)
 	}
 
 	b := ctrl.NewControllerManagedBy(mgr).
-		For(&ipamv1.IPAddressClaim{}, builder.WithPredicates(
+		For(&ipamv1beta1.IPAddressClaim{}, builder.WithPredicates(
 			predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetLogger(), r.WatchFilterValue),
 		)).
 		Watches(
-			&clusterv1.Cluster{},
+			&clusterv1beta1.Cluster{},
 			ctrlhandler.EnqueueRequestsFromMapFunc(r.clusterToIPClaims),
 			builder.WithPredicates(predicate.Funcs{
 				UpdateFunc: func(e event.UpdateEvent) bool {
-					oldCluster, oldOK := e.ObjectOld.(*clusterv1.Cluster)
-					newCluster, newOK := e.ObjectNew.(*clusterv1.Cluster)
+					oldCluster, oldOK := e.ObjectOld.(*clusterv1beta1.Cluster)
+					newCluster, newOK := e.ObjectNew.(*clusterv1beta1.Cluster)
 					if !oldOK || !newOK {
 						return false
 					}
@@ -120,37 +120,15 @@ func (r *ClaimReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager
 
 // Reconcile is called by the controller to reconcile a claim.
 func (r *ClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
-	log := ctrl.LoggerFrom(ctx)
-
-	// Fetch the IPAddressClaim
-	claim := &ipamv1.IPAddressClaim{}
+	claim := &ipamv1beta1.IPAddressClaim{}
 	if err := r.Get(ctx, req.NamespacedName, claim); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Check if the owning cluster is paused (using cluster label)
-	var cluster *clusterv1.Cluster
-	var err error
-	if _, ok := claim.GetLabels()[clusterv1.ClusterNameLabel]; ok {
-		cluster, err = clusterutil.GetClusterFromMetadata(ctx, r.Client, claim.ObjectMeta)
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
-			// Cluster not found, continue anyway (claim might not be cluster-scoped)
-		}
-		if cluster != nil && annotations.IsPaused(cluster, cluster) {
-			if claim.DeletionTimestamp.IsZero() {
-				log.Info("IPAddressClaim linked to a cluster that is paused, skipping reconciliation")
-				return ctrl.Result{}, nil
-			}
-		}
+	if res, err := r.checkClusterPaused(ctx, claim); err != nil || res != nil {
+		return unwrapResult(res), err
 	}
 
-	// Create a patch helper for the claim.
 	patchHelper, err := patch.NewHelper(claim, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -166,26 +144,56 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ct
 		return ctrl.Result{}, nil
 	}
 
-	var res *ctrl.Result
-	var pool client.Object
-
-	// Create the provider handler and fetch the pool.
 	handler := r.Adapter.ClaimHandlerFor(r.Client, claim)
 
-	if pool, res, err = handler.FetchPool(ctx); err != nil || res != nil {
-		if apierrors.IsNotFound(err) {
-			err := fmt.Errorf("pool not found: %w", err)
-			log.Error(err, "the referenced pool could not be found")
-			if !claim.DeletionTimestamp.IsZero() {
-				return r.reconcileDelete(ctx, claim, handler)
-			}
-			return ctrl.Result{}, nil
-		}
-		return unwrapResult(res), errors.Wrap(err, "failed to fetch pool")
+	if !claim.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, claim, handler)
+	}
+
+	return r.reconcileNormal(ctx, claim, handler)
+}
+
+func (r *ClaimReconciler) checkClusterPaused(ctx context.Context, claim *ipamv1beta1.IPAddressClaim) (*ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	_, hasClusterLabel := claim.GetLabels()[clusterv1beta1.ClusterNameLabel]
+	if !hasClusterLabel {
+		return nil, nil
+	}
+
+	cluster, err := clusterutil.GetClusterFromMetadata(ctx, r.Client, claim.ObjectMeta)
+	if apierrors.IsNotFound(err) {
+		// Cluster not found, continue anyway (claim might not be cluster-scoped).
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if cluster == nil || !annotations.IsPaused(cluster, cluster) {
+		return nil, nil
+	}
+
+	if !claim.DeletionTimestamp.IsZero() {
+		// Allow deletion even if cluster is paused.
+		return nil, nil
+	}
+
+	log.Info("IPAddressClaim linked to a cluster that is paused, skipping reconciliation")
+	res := ctrl.Result{}
+	return &res, nil
+}
+
+func (r *ClaimReconciler) reconcileNormal(ctx context.Context, claim *ipamv1beta1.IPAddressClaim, handler ClaimHandler) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	pool, res, err := handler.FetchPool(ctx)
+	if err != nil || res != nil {
+		return r.handlePoolFetchError(ctx, claim, handler, err, res)
 	}
 
 	if pool == nil {
-		err = fmt.Errorf("pool is nil")
+		err := fmt.Errorf("pool is nil")
 		log.Error(err, "pool error")
 		return ctrl.Result{}, errors.Wrap(err, "reconciliation failed")
 	}
@@ -195,58 +203,20 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ct
 		return ctrl.Result{}, nil
 	}
 
-	if !claim.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, claim, handler)
-	}
-
-	// We always ensure there is a valid address object passed to the handler.
 	address := NewIPAddress(claim, pool)
 
-	// Patch or create the address, ensuring necessary owner references and labels are set
-	operationResult, err := controllerutil.CreateOrPatch(ctx, r.Client, &address, func() error {
-		if res, err = handler.EnsureAddress(ctx, &address); err != nil {
-			return err
-		}
-
-		if err = ensureIPAddressOwnerReferences(r.Scheme, &address, claim, pool); err != nil {
-			return errors.Wrap(err, "failed to ensure owner references on address")
-		}
-
-		if val, ok := claim.Labels[clusterv1.ClusterNameLabel]; ok {
-			if address.Labels == nil {
-				address.Labels = make(map[string]string)
-			}
-			address.Labels[clusterv1.ClusterNameLabel] = val
-		}
-
-		_ = controllerutil.AddFinalizer(&address, ProtectAddressFinalizer)
-
-		return nil
-	})
-
-	if res != nil || err != nil {
-		if err != nil {
-			err = errors.Wrap(err, "failed to create or patch address")
-		}
-		return unwrapResult(res), err
+	operationResult, err := r.createOrPatchAddress(ctx, &address, claim, pool, handler)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if operationResult != controllerutil.OperationResultNone {
 		log.Info("IPAddress successfully created or patched", "operation", operationResult)
 	}
 
-	// Wait for cache visibility
-	err = wait.PollUntilContextTimeout(ctx, 5*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		key := client.ObjectKeyFromObject(&address)
-		if err := r.Get(ctx, key, &ipamv1.IPAddress{}); err != nil {
-			return false, client.IgnoreNotFound(err)
-		}
-		return true, nil
-	})
-
-	if err != nil {
-		log.Info("Address is not yet visible in cache, requeueing")
-		return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
+	if err := r.waitForAddressInCache(ctx, &address); err != nil {
+		log.Info("Address is not yet visible in cache, requeueing", "error", err)
+		return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, err
 	}
 
 	if address.DeletionTimestamp != nil {
@@ -254,51 +224,134 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ct
 	}
 
 	claim.Status.AddressRef = corev1.LocalObjectReference{Name: address.Name}
+	return ctrl.Result{}, nil
+}
+
+func (r *ClaimReconciler) handlePoolFetchError(ctx context.Context, claim *ipamv1beta1.IPAddressClaim, handler ClaimHandler, err error, res *ctrl.Result) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	if !apierrors.IsNotFound(err) {
+		return unwrapResult(res), errors.Wrap(err, "failed to fetch pool")
+	}
+
+	err = fmt.Errorf("pool not found: %w", err)
+	log.Error(err, "the referenced pool could not be found")
+
+	if !claim.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, claim, handler)
+	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *ClaimReconciler) reconcileDelete(ctx context.Context, claim *ipamv1.IPAddressClaim, handler ClaimHandler) (ctrl.Result, error) {
+func (r *ClaimReconciler) createOrPatchAddress(ctx context.Context, address *ipamv1beta1.IPAddress, claim *ipamv1beta1.IPAddressClaim, pool client.Object, handler ClaimHandler) (controllerutil.OperationResult, error) {
+	var res *ctrl.Result
+
+	operationResult, err := controllerutil.CreateOrPatch(ctx, r.Client, address, func() error {
+		var err error
+		if res, err = handler.EnsureAddress(ctx, address); err != nil {
+			return err
+		}
+
+		if err = ensureIPAddressOwnerReferences(r.Scheme, address, claim, pool); err != nil {
+			return errors.Wrap(err, "failed to ensure owner references on address")
+		}
+
+		r.copyClusterLabelToAddress(address, claim)
+		_ = controllerutil.AddFinalizer(address, ProtectAddressFinalizer)
+
+		return nil
+	})
+
+	if res != nil {
+		return operationResult, errors.New("handler returned result during address creation")
+	}
+	if err != nil {
+		return operationResult, errors.Wrap(err, "failed to create or patch address")
+	}
+
+	return operationResult, nil
+}
+
+func (r *ClaimReconciler) copyClusterLabelToAddress(address *ipamv1beta1.IPAddress, claim *ipamv1beta1.IPAddressClaim) {
+	val, ok := claim.Labels[clusterv1beta1.ClusterNameLabel]
+	if !ok {
+		return
+	}
+
+	if address.Labels == nil {
+		address.Labels = make(map[string]string)
+	}
+	address.Labels[clusterv1beta1.ClusterNameLabel] = val
+}
+
+func (r *ClaimReconciler) waitForAddressInCache(ctx context.Context, address *ipamv1beta1.IPAddress) error {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		key := client.ObjectKeyFromObject(address)
+		if err := r.Get(ctx, key, &ipamv1beta1.IPAddress{}); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		return true, nil
+	})
+}
+
+func (r *ClaimReconciler) reconcileDelete(ctx context.Context, claim *ipamv1beta1.IPAddressClaim, handler ClaimHandler) (ctrl.Result, error) {
 	if res, err := handler.ReleaseAddress(ctx); err != nil {
 		return unwrapResult(res), fmt.Errorf("release address: %w", err)
 	}
 
-	address := &ipamv1.IPAddress{}
-	namespacedName := types.NamespacedName{
-		Namespace: claim.Namespace,
-		Name:      claim.Name,
-	}
-	if err := r.Get(ctx, namespacedName, address); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrap(err, "failed to fetch address")
-	}
-
-	if address.Name != "" {
-		var err error
-		p := client.MergeFrom(address.DeepCopy())
-		if controllerutil.RemoveFinalizer(address, ProtectAddressFinalizer) {
-			if err = r.Patch(ctx, address, p); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, errors.Wrap(err, "failed to remove address finalizer")
-			}
-		}
-
-		if err == nil {
-			if err := r.Delete(ctx, address); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
-		}
+	if err := r.deleteIPAddress(ctx, claim); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	controllerutil.RemoveFinalizer(claim, ReleaseAddressFinalizer)
 	return ctrl.Result{}, nil
 }
 
+func (r *ClaimReconciler) deleteIPAddress(ctx context.Context, claim *ipamv1beta1.IPAddressClaim) error {
+	address := &ipamv1beta1.IPAddress{}
+	namespacedName := types.NamespacedName{
+		Namespace: claim.Namespace,
+		Name:      claim.Name,
+	}
+
+	err := r.Get(ctx, namespacedName, address)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch address")
+	}
+
+	if address.Name == "" {
+		return nil
+	}
+
+	return r.removeAddressFinalizerAndDelete(ctx, address)
+}
+
+func (r *ClaimReconciler) removeAddressFinalizerAndDelete(ctx context.Context, address *ipamv1beta1.IPAddress) error {
+	p := client.MergeFrom(address.DeepCopy())
+	if controllerutil.RemoveFinalizer(address, ProtectAddressFinalizer) {
+		if err := r.Patch(ctx, address, p); err != nil && !apierrors.IsNotFound(err) {
+			return errors.Wrap(err, "failed to remove address finalizer")
+		}
+	}
+
+	if err := r.Delete(ctx, address); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	return nil
+}
+
 func (r *ClaimReconciler) clusterToIPClaims(_ context.Context, o client.Object) []reconcile.Request {
-	cluster, ok := o.(*clusterv1.Cluster)
+	cluster, ok := o.(*clusterv1beta1.Cluster)
 	if !ok {
 		return nil
 	}
 
-	claimList := &ipamv1.IPAddressClaimList{}
+	claimList := &ipamv1beta1.IPAddressClaimList{}
 	if err := r.List(context.Background(), claimList,
 		client.InNamespace(cluster.Namespace),
 		client.MatchingFields{"clusterName": cluster.Name},
@@ -319,12 +372,12 @@ func (r *ClaimReconciler) clusterToIPClaims(_ context.Context, o client.Object) 
 }
 
 func indexClusterName(object client.Object) []string {
-	claim, ok := object.(*ipamv1.IPAddressClaim)
+	claim, ok := object.(*ipamv1beta1.IPAddressClaim)
 	if !ok {
 		return nil
 	}
-	// In v1beta1, cluster name is only available via labels
-	if clusterName, ok := claim.Labels[clusterv1.ClusterNameLabel]; ok {
+	// In v1beta1, cluster name is only available via labels.
+	if clusterName, ok := claim.Labels[clusterv1beta1.ClusterNameLabel]; ok {
 		return []string{clusterName}
 	}
 	return nil
@@ -338,14 +391,14 @@ func unwrapResult(res *ctrl.Result) ctrl.Result {
 }
 
 // NewIPAddress creates a new ipamv1.IPAddress with references to a pool and claim.
-func NewIPAddress(claim *ipamv1.IPAddressClaim, pool client.Object) ipamv1.IPAddress {
+func NewIPAddress(claim *ipamv1beta1.IPAddressClaim, pool client.Object) ipamv1beta1.IPAddress {
 	gvk := pool.GetObjectKind().GroupVersionKind()
-	return ipamv1.IPAddress{
+	return ipamv1beta1.IPAddress{
 		ObjectMeta: ctrl.ObjectMeta{
 			Name:      claim.Name,
 			Namespace: claim.Namespace,
 		},
-		Spec: ipamv1.IPAddressSpec{
+		Spec: ipamv1beta1.IPAddressSpec{
 			ClaimRef: corev1.LocalObjectReference{
 				Name: claim.Name,
 			},
@@ -360,9 +413,10 @@ func NewIPAddress(claim *ipamv1.IPAddressClaim, pool client.Object) ipamv1.IPAdd
 
 // ensureIPAddressOwnerReferences ensures that an IPAddress has the
 // IPAddressClaim and IPPool as an OwnerReference.
-func ensureIPAddressOwnerReferences(scheme *runtime.Scheme, address *ipamv1.IPAddress, claim *ipamv1.IPAddressClaim, pool client.Object) error {
+func ensureIPAddressOwnerReferences(scheme *runtime.Scheme, address *ipamv1beta1.IPAddress, claim *ipamv1beta1.IPAddressClaim, pool client.Object) error {
 	if err := controllerutil.SetControllerReference(claim, address, scheme); err != nil {
-		if _, ok := err.(*controllerutil.AlreadyOwnedError); !ok {
+		alreadyOwnedError := &controllerutil.AlreadyOwnedError{}
+		if errors.As(err, &alreadyOwnedError) {
 			return errors.Wrap(err, "Failed to update address's claim owner reference")
 		}
 	}

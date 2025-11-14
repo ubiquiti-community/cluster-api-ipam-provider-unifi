@@ -1,41 +1,43 @@
-# Binaries for programs and plugins
+__debug_bin
+_artifacts
+!config/crd/bases/.gitkeep
+!vendor/**/zz_generated.*
+.DS_Store
+.idea
+.idea/
+.tiltbuild/
+.vscode
+.vscode/
+*.dll
+*.dylib
 *.exe
 *.exe~
-*.dll
-*.so
-*.dylib
-bin/
-testbin/
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool
-*.out
-coverage.txt
-
-# Kubernetes Generated files
-config/crd/bases/*
-!config/crd/bases/.gitkeep
-config/webhook/manifests.yaml
-
-# Controller-gen temporary files
 *.gen.go
-
-# IDE
-.idea/
-.vscode/
-*.swp
+*.out
+*.so
 *.swo
+*.swp
+*.test
 *~
-
-# Kubebuilder
+bin/
+config/crd/bases/*
+config/default/manager_image_patch.yaml-e
+config/default/manager_pull_policy.yaml-e
+config/webhook/manifests.yaml
 cover.out
+coverage.txt
+dist
+dist/
 kubebuilder
-
-# Tilt
-.tiltbuild/
+kubeconfig
+out/
+testbin/
 tilt-settings.yaml
-
-# OS
-.DS_Store
+tmp/
+linux/arm64/
+test-resources.yaml
+test-*.yaml
+test-*.go
+test-connection.go
+test-unifi-setup.yaml
+test-unifi-connection.go

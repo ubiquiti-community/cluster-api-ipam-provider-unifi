@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,11 +30,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 )
 
-// UnifiInstanceReconciler reconciles a UnifiInstance object
+// UnifiInstanceReconciler reconciles a UnifiInstance object.
 type UnifiInstanceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -44,12 +45,11 @@ type UnifiInstanceReconciler struct {
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=unifiinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop
+// Reconcile is part of the main kubernetes reconciliation loop.
 func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the UnifiInstance
-	instance := &ipamv1alpha1.UnifiInstance{}
+	instance := &v1beta2.UnifiInstance{}
 	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -58,70 +58,79 @@ func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Get the credentials secret
+	apiKey, err := r.getAPIKey(ctx, instance, logger)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	client, err := r.createAndValidateClient(ctx, instance, apiKey, logger)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return r.updateStatusReady(ctx, instance, logger, client != nil)
+}
+
+func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger) (string, error) {
 	secret := &corev1.Secret{}
-	// LocalObjectReference doesn't have Namespace, use instance namespace
 	secretName := types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,
 		Namespace: instance.Namespace,
 	}
 
 	if err := r.Get(ctx, secretName, secret); err != nil {
-		logger.Error(err, "unable to fetch credentials secret", "secret", secretName.Name)
-		instance.Status.Ready = false
-		instance.Status.FailureReason = ptr("SecretNotFound")
-		instance.Status.FailureMessage = ptr(fmt.Sprintf("failed to get secret %s: %v", secretName, err))
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			logger.Error(updateErr, "unable to update UnifiInstance status")
-		}
-		return ctrl.Result{}, err
+		return "", r.updateStatusError(ctx, instance, logger, "SecretNotFound", fmt.Sprintf("failed to get secret %s: %v", secretName, err), err)
 	}
 
 	apiKey := string(secret.Data["apiKey"])
-
 	if apiKey == "" {
 		err := fmt.Errorf("secret %s must contain 'apiKey' key", secretName)
-		logger.Error(err, "invalid credentials secret")
-		instance.Status.Ready = false
-		instance.Status.FailureReason = ptr("InvalidCredentials")
-		instance.Status.FailureMessage = ptr(err.Error())
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			logger.Error(updateErr, "unable to update UnifiInstance status")
-		}
-		return ctrl.Result{}, err
+		return "", r.updateStatusError(ctx, instance, logger, "InvalidCredentials", err.Error(), err)
 	}
 
-	// Create Unifi client and validate credentials
+	return apiKey, nil
+}
+
+func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.Client, error) {
+	site := "default"
+	if instance.Spec.Site != nil {
+		site = *instance.Spec.Site
+	}
+	insecure := false
+	if instance.Spec.Insecure != nil {
+		insecure = *instance.Spec.Insecure
+	}
 	client, err := unifi.NewClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   apiKey,
-		Site:     instance.Spec.Site,
-		Insecure: instance.Spec.Insecure,
+		Site:     site,
+		Insecure: insecure,
 	})
 	if err != nil {
-		logger.Error(err, "unable to create Unifi client")
-		instance.Status.Ready = false
-		instance.Status.FailureReason = ptr("ClientCreationFailed")
-		instance.Status.FailureMessage = ptr(fmt.Sprintf("failed to create Unifi client: %v", err))
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			logger.Error(updateErr, "unable to update UnifiInstance status")
-		}
-		return ctrl.Result{}, err
+		return nil, r.updateStatusError(ctx, instance, logger, "ClientCreationFailed", fmt.Sprintf("failed to create Unifi client: %v", err), err)
 	}
 
 	if err := client.ValidateCredentials(ctx); err != nil {
-		logger.Error(err, "unable to validate Unifi credentials")
-		instance.Status.Ready = false
-		instance.Status.FailureReason = ptr("CredentialsValidationFailed")
-		instance.Status.FailureMessage = ptr(err.Error())
-		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-			logger.Error(updateErr, "unable to update UnifiInstance status")
-		}
-		return ctrl.Result{}, err
+		return nil, r.updateStatusError(ctx, instance, logger, "CredentialsValidationFailed", err.Error(), err)
 	}
 
-	// Update status to ready
-	instance.Status.Ready = true
+	return client, nil
+}
+
+func (r *UnifiInstanceReconciler) updateStatusError(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger, reason, message string, origErr error) error {
+	logger.Error(origErr, "validation failed")
+	falseVal := false
+	instance.Status.Ready = &falseVal
+	instance.Status.FailureReason = &reason
+	instance.Status.FailureMessage = &message
+	if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
+		logger.Error(updateErr, "unable to update UnifiInstance status")
+	}
+	return origErr
+}
+
+func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger, ready bool) (ctrl.Result, error) {
+	instance.Status.Ready = &ready
 	instance.Status.FailureReason = nil
 	instance.Status.FailureMessage = nil
 	now := metav1.Now()
@@ -132,14 +141,14 @@ func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("successfully validated UnifiInstance", "instance", req.NamespacedName)
+	logger.Info("successfully validated UnifiInstance", "instance", client.ObjectKeyFromObject(instance))
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *UnifiInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&ipamv1alpha1.UnifiInstance{}).
+		For(&v1beta2.UnifiInstance{}).
 		Complete(r)
 }
 
