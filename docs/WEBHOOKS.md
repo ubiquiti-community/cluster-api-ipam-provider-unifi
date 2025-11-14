@@ -149,7 +149,7 @@ Updated kustomization and created patches:
   - Added resources: `../webhook`
   - Added patches: `manager_webhook_patch.yaml`, `webhookcainjection_patch.yaml`, `manager_auth_proxy_patch.yaml`
   - Added replacements for webhook service name/namespace substitution
-  - Uses `kustomize.config.k8s.io/v1beta1`
+  - Uses `kustomize.config.k8s.io/v1beta2`
 
 - **`manager_webhook_patch.yaml`** (created):
   - Adds webhook server port 9443 to manager container

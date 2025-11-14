@@ -58,8 +58,8 @@ sections:
 Enforces consistent import aliasing:
 - `corev1` for k8s.io/api/core/v1
 - `metav1` for k8s.io/apimachinery/pkg/apis/meta/v1
-- `clusterv1` for cluster-api/api/v1beta1
-- `ipamv1` for cluster-api/exp/ipam/api/v1beta1
+- `clusterv1` for cluster-api/api/v1beta2
+- `ipamv1` for cluster-api/exp/ipam/api/v1beta2
 - `ipamv1alpha1` for project's api/v1alpha1
 
 #### License Header (goheader)

@@ -375,7 +375,7 @@ func indexClusterName(object client.Object) []string {
 	if !ok {
 		return nil
 	}
-	// In v1beta1, cluster name is only available via labels.
+	// In v1beta2, cluster name is only available via labels.
 	if clusterName, ok := claim.Labels[clusterv1beta2.ClusterNameLabel]; ok {
 		return []string{clusterName}
 	}
