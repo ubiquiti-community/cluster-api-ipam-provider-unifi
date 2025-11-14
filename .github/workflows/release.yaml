@@ -20,6 +20,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -41,9 +44,6 @@ jobs:
 
       - name: Generate manifests
         run: go generate ./...
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.0.0
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
