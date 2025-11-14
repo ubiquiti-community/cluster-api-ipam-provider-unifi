@@ -1,0 +1,51 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances
+  - unifiippools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances/finalizers
+  - unifiippools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances/status
+  - unifiippools/status
+  verbs:
+  - get
+  - patch
+  - update

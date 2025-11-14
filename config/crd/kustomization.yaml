@@ -1,0 +1,16 @@
+resources:
+  - bases/ipam.cluster.x-k8s.io_unifiinstances.yaml
+  - bases/ipam.cluster.x-k8s.io_unifiippools.yaml
+# +kubebuilder:scaffold:crdkustomizeresource
+
+# patches:
+# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
+# patches here are for enabling the conversion webhook for each CRD
+#+kubebuilder:scaffold:crdkustomizewebhookpatch
+
+# [CERTMANAGER] To enable cert-manager, uncomment all the sections with [CERTMANAGER] prefix.
+# patches here are for enabling the CA injection for each CRD
+#+kubebuilder:scaffold:crdkustomizecainjectionpatch
+
+configurations:
+  - kustomizeconfig.yaml

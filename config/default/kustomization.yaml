@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ipam-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: unifi-ipam-controller-manager
+  namespace: ipam-system

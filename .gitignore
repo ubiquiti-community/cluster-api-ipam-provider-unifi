@@ -1,0 +1,41 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+testbin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+
+# Kubernetes Generated files
+config/crd/bases/*
+!config/crd/bases/.gitkeep
+config/webhook/manifests.yaml
+
+# Controller-gen temporary files
+*.gen.go
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Kubebuilder
+cover.out
+kubebuilder
+
+# Tilt
+.tiltbuild/
+tilt-settings.yaml
+
+# OS
+.DS_Store

@@ -1,0 +1,29 @@
+apiVersion: ipam.cluster.x-k8s.io/v1alpha1
+kind: UnifiInstance
+metadata:
+  name: unifi-controller
+  namespace: default
+spec:
+  # Unifi controller URL
+  host: "https://unifi.example.com:8443"
+
+  # Reference to secret containing credentials
+  credentialsRef:
+    name: unifi-credentials
+    namespace: default
+
+  # Unifi site name (optional, defaults to "default")
+  site: default
+
+  # Skip TLS verification (optional, defaults to false)
+  insecure: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unifi-credentials
+  namespace: default
+type: Opaque
+stringData:
+  username: admin
+  password: your-password-here

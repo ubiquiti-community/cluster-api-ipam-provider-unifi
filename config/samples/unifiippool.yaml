@@ -1,0 +1,28 @@
+apiVersion: ipam.cluster.x-k8s.io/v1alpha1
+kind: UnifiIPPool
+metadata:
+  name: cluster-pool
+  namespace: default
+spec:
+  # Reference to the Unifi instance
+  instanceRef:
+    name: unifi-controller
+    namespace: default
+
+  # Network ID from Unifi (get this from your Unifi controller)
+  # You can find this in the Unifi controller UI under Networks
+  networkId: "5f9a8b7c6d5e4f3a2b1c0d9e"
+
+  # Subnets to allocate from
+  subnets:
+    - cidr: "192.168.1.0/24"
+      gateway: "192.168.1.1"
+      prefix: 24
+      # Optional: Exclude specific IPs or ranges
+      excludeRanges:
+        - "192.168.1.1-192.168.1.10"
+        - "192.168.1.200-192.168.1.254"
+      # Optional: DNS servers
+      dns:
+        - "8.8.8.8"
+        - "8.8.4.4"
