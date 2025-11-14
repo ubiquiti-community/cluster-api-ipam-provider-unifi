@@ -437,6 +437,7 @@ func (r *UnifiIPPoolReconciler) updateSyncCondition(pool *v1beta2.UnifiIPPool, d
 		Reason:             "SyncSucceeded",
 		Message:            "Pool configuration is synchronized with Unifi network",
 		ObservedGeneration: pool.Generation,
+		LastTransitionTime: metav1.Now(),
 	}
 
 	if syncErr != nil {
@@ -460,6 +461,7 @@ func (r *UnifiIPPoolReconciler) updateReadyCondition(pool *v1beta2.UnifiIPPool, 
 		Reason:             "PoolReady",
 		Message:            "Pool is ready for IP allocation",
 		ObservedGeneration: pool.Generation,
+		LastTransitionTime: metav1.Now(),
 	}
 
 	// Check if instance is ready
@@ -487,6 +489,7 @@ func (r *UnifiIPPoolReconciler) updateHealthyCondition(pool *v1beta2.UnifiIPPool
 		Reason:             "PoolHealthy",
 		Message:            "Pool is operating normally",
 		ObservedGeneration: pool.Generation,
+		LastTransitionTime: metav1.Now(),
 	}
 
 	// Check for drift
@@ -510,6 +513,7 @@ func (r *UnifiIPPoolReconciler) updateExhaustedCondition(pool *v1beta2.UnifiIPPo
 		Reason:             "CapacityAvailable",
 		Message:            "Pool has available capacity",
 		ObservedGeneration: pool.Generation,
+		LastTransitionTime: metav1.Now(),
 	}
 
 	// Check if pool is exhausted or nearly exhausted
