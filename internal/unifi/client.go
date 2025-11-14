@@ -186,17 +186,38 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, networkID, macAddress, hos
 }
 
 // allocateNextIP finds the next available IP using poolutil.
-func (c *Client) allocateNextIP(_ *unifi.Network, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta1.IPAddress) (string, error) {
+func (c *Client) allocateNextIP(network *unifi.Network, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta1.IPAddress) (string, error) {
 	if subnetSpec == nil {
 		return "", fmt.Errorf("subnet spec is nil")
 	}
 
-	// Build list of in-use IPs including gateway.
+	// Build list of in-use IPs including:
+	// 1. IPs from Kubernetes IPAddress resources (CAPI-managed)
+	// 2. Gateway
+	// 3. Existing Unifi clients/leases (to avoid conflicts with existing network devices)
 	inUseAddresses := make([]string, 0, len(addressesInUse)+1)
+
+	// Add CAPI-managed IPs
 	for _, addr := range addressesInUse {
-		inUseAddresses = append(inUseAddresses, addr.Spec.Address)
+		if addr.Spec.Address != "" {
+			inUseAddresses = append(inUseAddresses, addr.Spec.Address)
+		}
 	}
-	inUseAddresses = append(inUseAddresses, subnetSpec.Gateway)
+
+	// Add gateway
+	if subnetSpec.Gateway != "" {
+		inUseAddresses = append(inUseAddresses, subnetSpec.Gateway)
+	}
+
+	// Add existing Unifi client IPs to avoid conflicts
+	existingIPs, err := c.getExistingClientIPs(context.Background(), network.ID)
+	if err != nil {
+		// Log warning but continue - we'll at least avoid CAPI-managed conflicts
+		// TODO: Add proper logging here
+		_ = err
+	} else {
+		inUseAddresses = append(inUseAddresses, existingIPs...)
+	}
 
 	// Convert to IPSet.
 	inUseIPSet, err := poolutil.AddressesToIPSet(inUseAddresses)
@@ -217,6 +238,39 @@ func (c *Client) allocateNextIP(_ *unifi.Network, subnetSpec *v1beta2.SubnetSpec
 	}
 
 	return availableIP, nil
+}
+
+// getExistingClientIPs retrieves all currently active/leased IPs from Unifi clients.
+// This helps avoid allocating IPs that are already in use by existing network devices.
+func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]string, error) {
+	// List all active clients on the site (this includes both wired and wireless clients)
+	clients, err := c.client.ListClientsActive(ctx, c.site)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list active clients: %w", err)
+	}
+
+	// Collect IPs from clients - include both current IPs and fixed IP assignments
+	existingIPs := make([]string, 0, len(clients))
+	for i := range clients {
+		client := &clients[i]
+
+		// Add the client's current IP (active connection)
+		if client.IP != "" {
+			// Filter by network ID if specified
+			if networkID == "" || client.NetworkId == networkID {
+				existingIPs = append(existingIPs, client.IP)
+			}
+		}
+
+		// Also add any fixed IP assignments from the User records
+		if client.FixedIP != "" {
+			if networkID == "" || client.NetworkId == networkID {
+				existingIPs = append(existingIPs, client.FixedIP)
+			}
+		}
+	}
+
+	return existingIPs, nil
 }
 
 // ReleaseIP releases an allocated IP address.
