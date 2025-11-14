@@ -39,8 +39,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-
-
       - name: Generate manifests
         run: go generate ./...
 
