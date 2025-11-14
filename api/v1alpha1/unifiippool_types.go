@@ -1,3 +1,17 @@
+// Copyright 2024.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package v1alpha1
 
 /*
@@ -19,10 +33,11 @@ limitations under the License.
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
-// UnifiIPPoolSpec defines the desired state of UnifiIPPool
+// UnifiIPPoolSpec defines the desired state of UnifiIPPool.
 type UnifiIPPoolSpec struct {
 	// InstanceRef is a reference to the UnifiInstance to use
 	// +kubebuilder:validation:Required
@@ -39,7 +54,7 @@ type UnifiIPPoolSpec struct {
 	Subnets []SubnetSpec `json:"subnets"`
 }
 
-// SubnetSpec defines a subnet configuration
+// SubnetSpec defines a subnet configuration.
 type SubnetSpec struct {
 	// CIDR is the subnet CIDR block
 	// +kubebuilder:validation:Required
@@ -59,58 +74,58 @@ type SubnetSpec struct {
 
 	// ExcludeRanges is a list of IP ranges to exclude from allocation
 	// Format: "start-end" (e.g., "192.168.1.1-192.168.1.10")
-	// +optional
+	// +optional.
 	ExcludeRanges []string `json:"excludeRanges,omitempty"`
 
 	// DNS is the list of DNS servers for this subnet
-	// +optional
+	// +optional.
 	DNS []string `json:"dns,omitempty"`
 }
 
-// UnifiIPPoolStatus defines the observed state of UnifiIPPool
+// UnifiIPPoolStatus defines the observed state of UnifiIPPool.
 type UnifiIPPoolStatus struct {
 	// Addresses provides summary statistics about address allocation
-	// +optional
+	// +optional.
 	Addresses *IPAddressStatusSummary `json:"addresses,omitempty"`
 
 	// Conditions defines current state of the UnifiIPPool
-	// +optional
+	// +optional.
 	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
 
 	// LastSyncTime is the last time the pool was successfully synced
-	// +optional
+	// +optional.
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 }
 
-// IPAddressStatusSummary provides summary statistics about IP address allocation
+// IPAddressStatusSummary provides summary statistics about IP address allocation.
 type IPAddressStatusSummary struct {
-	// Total is the total number of addresses in the pool
+	// Total is the total number of addresses in the pool.
 	Total int `json:"total"`
 
-	// Used is the number of addresses currently allocated
+	// Used is the number of addresses currently allocated.
 	Used int `json:"used"`
 
-	// Free is the number of addresses available for allocation
+	// Free is the number of addresses available for allocation.
 	Free int `json:"free"`
 
-	// OutOfRange is the number of addresses allocated outside the pool's range
+	// OutOfRange is the number of addresses allocated outside the pool's range.
 	OutOfRange int `json:"outOfRange"`
 }
 
-// IPAddressStatus tracks an allocated IP address (for backward compatibility)
+// IPAddressStatus tracks an allocated IP address (for backward compatibility).
 type IPAddressStatus struct {
-	// Address is the allocated IP address
+	// Address is the allocated IP address.
 	Address string `json:"address"`
 
-	// ClaimRef is a reference to the IPAddressClaim
+	// ClaimRef is a reference to the IPAddressClaim.
 	ClaimRef corev1.ObjectReference `json:"claimRef"`
 
 	// MacAddress is the MAC address associated with this IP (if available)
-	// +optional
+	// +optional.
 	MacAddress string `json:"macAddress,omitempty"`
 
 	// Hostname is the hostname associated with this IP (if available)
-	// +optional
+	// +optional.
 	Hostname string `json:"hostname,omitempty"`
 }
 
@@ -123,7 +138,7 @@ type IPAddressStatus struct {
 // +kubebuilder:printcolumn:name="Free",type="integer",JSONPath=".status.addresses.free",description="Number of free addresses"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation"
 
-// UnifiIPPool is the Schema for the unifiippools API
+// UnifiIPPool is the Schema for the unifiippools API.
 type UnifiIPPool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -134,7 +149,7 @@ type UnifiIPPool struct {
 
 // +kubebuilder:object:root=true
 
-// UnifiIPPoolList contains a list of UnifiIPPool
+// UnifiIPPoolList contains a list of UnifiIPPool.
 type UnifiIPPoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

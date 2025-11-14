@@ -1,0 +1,24 @@
+# This patch enables Conversion Webhook for CRD
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unifi-ipam-controller-manager
+  namespace: ipam-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          ports:
+            - containerPort: 9443
+              name: webhook-server
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: cert
+              readOnly: true
+      volumes:
+        - name: cert
+          secret:
+            defaultMode: 420
+            secretName: webhook-server-cert

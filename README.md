@@ -23,10 +23,43 @@ This provider integrates Unifi network controllers with Cluster API to enable dy
 
 ## Installation
 
+### Using clusterctl
+
+The recommended way to install the provider is using `clusterctl`:
+
+1. Create a `~/.cluster-api/clusterctl.yaml` file with the provider configuration:
+
+```yaml
+providers:
+  - name: "unifi"
+    url: "https://github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/releases/latest/metadata.yaml"
+    type: "IPAMProvider"
+```
+
+2. Initialize the provider:
+
+```bash
+clusterctl init --ipam unifi
+```
+
+Alternatively, you can specify the provider version explicitly:
+
+```yaml
+apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
+kind: Provider
+metadata:
+  name: cluster-api-ipam-provider-unifi
+  namespace: ipam-system
+spec:
+  version: v0.1.0  # Replace with desired version
+  type: IPAMProvider
+  url: https://github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/releases/download/v0.1.0/install.yaml
+```
+
 ### Using kubectl
 
 ```bash
-kubectl apply -f https://github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/releases/latest/download/ipam-components.yaml
+kubectl apply -f https://github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/releases/latest/download/install.yaml
 ```
 
 ### Using kustomize

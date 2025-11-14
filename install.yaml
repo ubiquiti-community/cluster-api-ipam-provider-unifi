@@ -1,0 +1,785 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: $(CERTIFICATE_NAMESPACE)/$(CERTIFICATE_NAME)
+    controller-gen.kubebuilder.io/version: v0.19.0
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifiinstances.ipam.cluster.x-k8s.io
+spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: unifi-ipam-webhook-service
+          namespace: ipam-system
+          path: /convert
+      conversionReviewVersions:
+      - v1
+  group: ipam.cluster.x-k8s.io
+  names:
+    kind: UnifiInstance
+    listKind: UnifiInstanceList
+    plural: unifiinstances
+    singular: unifiinstance
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .spec.host
+      name: Host
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: UnifiInstance is the Schema for the unifiinstances API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: UnifiInstanceSpec defines the desired state of UnifiInstance
+            properties:
+              credentialsRef:
+                description: CredentialsRef references a Secret containing username
+                  and password
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              host:
+                description: Host is the URL of the Unifi controller
+                pattern: ^https?://
+                type: string
+              insecure:
+                description: Insecure allows insecure HTTPS connections (skip TLS
+                  verification)
+                type: boolean
+              site:
+                default: default
+                description: Site is the Unifi site name (defaults to "default")
+                type: string
+            required:
+            - credentialsRef
+            - host
+            type: object
+          status:
+            description: UnifiInstanceStatus defines the observed state of UnifiInstance
+            properties:
+              conditions:
+                description: Conditions define the current state of the UnifiInstance
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureMessage:
+                description: FailureMessage provides details about any failure
+                type: string
+              failureReason:
+                description: FailureReason indicates the reason for any failure
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the last time the instance was successfully
+                  validated
+                format: date-time
+                type: string
+              ready:
+                description: Ready indicates whether the instance is ready for use
+                type: boolean
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: $(CERTIFICATE_NAMESPACE)/$(CERTIFICATE_NAME)
+    controller-gen.kubebuilder.io/version: v0.19.0
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifiippools.ipam.cluster.x-k8s.io
+spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: unifi-ipam-webhook-service
+          namespace: ipam-system
+          path: /convert
+      conversionReviewVersions:
+      - v1
+  group: ipam.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: UnifiIPPool
+    listKind: UnifiIPPoolList
+    plural: unifiippools
+    singular: unifiippool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Unifi network ID
+      jsonPath: .spec.networkId
+      name: NetworkID
+      type: string
+    - description: Total addresses in pool
+      jsonPath: .status.addresses.total
+      name: Total
+      type: integer
+    - description: Number of allocated addresses
+      jsonPath: .status.addresses.used
+      name: Used
+      type: integer
+    - description: Number of free addresses
+      jsonPath: .status.addresses.free
+      name: Free
+      type: integer
+    - description: Time duration since creation
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: UnifiIPPool is the Schema for the unifiippools API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: UnifiIPPoolSpec defines the desired state of UnifiIPPool
+            properties:
+              instanceRef:
+                description: InstanceRef is a reference to the UnifiInstance to use
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              networkId:
+                description: |-
+                  NetworkID is the Unifi network ID to allocate from
+                  This is the _id field from the Unifi network configuration
+                type: string
+              subnets:
+                description: Subnets is the list of subnets to allocate from
+                items:
+                  description: SubnetSpec defines a subnet configuration
+                  properties:
+                    cidr:
+                      description: CIDR is the subnet CIDR block
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                      type: string
+                    dns:
+                      description: DNS is the list of DNS servers for this subnet
+                      items:
+                        type: string
+                      type: array
+                    excludeRanges:
+                      description: |-
+                        ExcludeRanges is a list of IP ranges to exclude from allocation
+                        Format: "start-end" (e.g., "192.168.1.1-192.168.1.10")
+                      items:
+                        type: string
+                      type: array
+                    gateway:
+                      description: Gateway is the gateway IP address for this subnet
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}$
+                      type: string
+                    prefix:
+                      description: Prefix is the network prefix length
+                      maximum: 32
+                      minimum: 1
+                      type: integer
+                  required:
+                  - cidr
+                  - gateway
+                  - prefix
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - instanceRef
+            - networkId
+            - subnets
+            type: object
+          status:
+            description: UnifiIPPoolStatus defines the observed state of UnifiIPPool
+            properties:
+              addresses:
+                description: Addresses provides summary statistics about address allocation
+                properties:
+                  free:
+                    description: Free is the number of addresses available for allocation
+                    type: integer
+                  outOfRange:
+                    description: OutOfRange is the number of addresses allocated outside
+                      the pool's range
+                    type: integer
+                  total:
+                    description: Total is the total number of addresses in the pool
+                    type: integer
+                  used:
+                    description: Used is the number of addresses currently allocated
+                    type: integer
+                required:
+                - free
+                - outOfRange
+                - total
+                - used
+                type: object
+              conditions:
+                description: Conditions defines current state of the UnifiIPPool
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        Last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed. If that is not known, then using the time when
+                        the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        A human readable message indicating details about the transition.
+                        This field may be empty.
+                      type: string
+                    reason:
+                      description: |-
+                        The reason for the condition's last transition in CamelCase.
+                        The specific API may choose whether or not this field is considered a guaranteed API.
+                        This field may not be empty.
+                      type: string
+                    severity:
+                      description: |-
+                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        understand the current situation and act accordingly.
+                        The Severity field MUST be set only when Status=False.
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: |-
+                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
+                        can be useful (see .node.status.conditions), the ability to deconflict is important.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastSyncTime:
+                description: LastSyncTime is the last time the pool was successfully
+                  synced
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-controller-manager
+  namespace: ipam-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-leader-election-role
+  namespace: ipam-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances
+  - unifiippools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances/finalizers
+  - unifiippools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - unifiinstances/status
+  - unifiippools/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-leader-election-rolebinding
+  namespace: ipam-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: unifi-ipam-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: unifi-ipam-controller-manager
+  namespace: ipam-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: unifi-ipam-manager-role
+subjects:
+- kind: ServiceAccount
+  name: unifi-ipam-controller-manager
+  namespace: ipam-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-webhook-service
+  namespace: ipam-system
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443
+  selector:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+    control-plane: controller-manager
+  name: unifi-ipam-unifi-ipam-controller-manager
+  namespace: ipam-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: controller
+      app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=127.0.0.1:8080
+        - --leader-elect
+        command:
+        - /manager
+        image: ghcr.io/ubiquiti-community/cluster-api-ipam-provider-unifi:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: cert
+          readOnly: true
+      - args:
+        - --secure-listen-address=0.0.0.0:8443
+        - --upstream=http://127.0.0.1:8080/
+        - --logtostderr=true
+        - --v=0
+        image: gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0
+        name: kube-rbac-proxy
+        ports:
+        - containerPort: 8443
+          name: https
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 5m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: unifi-ipam-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: cert
+        secret:
+          defaultMode: 420
+          secretName: webhook-server-cert
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: $(CERTIFICATE_NAMESPACE)/$(CERTIFICATE_NAME)
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: unifi-ipam-webhook-service
+      namespace: ipam-system
+      path: /mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance
+  failurePolicy: Fail
+  name: munifiinstance.kb.io
+  rules:
+  - apiGroups:
+    - ipam.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - unifiinstances
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: unifi-ipam-webhook-service
+      namespace: ipam-system
+      path: /mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool
+  failurePolicy: Fail
+  name: munifiippool.kb.io
+  rules:
+  - apiGroups:
+    - ipam.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - unifiippools
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: $(CERTIFICATE_NAMESPACE)/$(CERTIFICATE_NAME)
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  name: unifi-ipam-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: unifi-ipam-webhook-service
+      namespace: ipam-system
+      path: /validate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance
+  failurePolicy: Fail
+  name: vunifiinstance.kb.io
+  rules:
+  - apiGroups:
+    - ipam.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - unifiinstances
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: unifi-ipam-webhook-service
+      namespace: ipam-system
+      path: /validate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool
+  failurePolicy: Fail
+  name: vunifiippool.kb.io
+  rules:
+  - apiGroups:
+    - ipam.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - unifiippools
+  sideEffects: None

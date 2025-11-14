@@ -27,10 +27,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/controllers"
+	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/webhooks"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
@@ -52,9 +55,13 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var watchFilterValue string
+	var webhookPort int
+	var webhookCertDir string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server binds to.")
+	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "The directory that contains the webhook server key and certificate.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -71,8 +78,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                  scheme,
-		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
+		Scheme:  scheme,
+		Metrics: metricsserver.Options{BindAddress: metricsAddr},
+		WebhookServer: webhook.NewServer(webhook.Options{
+			Port:    webhookPort,
+			CertDir: webhookCertDir,
+		}),
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "unifi-ipam-controller-leader-election",
@@ -83,7 +94,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup UnifiInstance controller
+	// Setup UnifiInstance controller.
 	if err = (&controllers.UnifiInstanceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -92,7 +103,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup UnifiIPPool controller
+	// Setup UnifiIPPool controller.
 	if err = (&controllers.UnifiIPPoolReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -101,7 +112,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup IPAddressClaim controller with UnifiProviderAdapter
+	// Setup IPAddressClaim controller with UnifiProviderAdapter.
 	ctx := ctrl.SetupSignalHandler()
 	if err = (&ipamutil.ClaimReconciler{
 		Client:           mgr.GetClient(),
@@ -113,7 +124,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Add health checks
+	// Setup webhooks.
+	if err = (&webhooks.UnifiIPPoolWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "UnifiIPPool")
+		os.Exit(1)
+	}
+	if err = (&webhooks.UnifiInstanceWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "UnifiInstance")
+		os.Exit(1)
+	}
+
+	// Add health checks.
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)

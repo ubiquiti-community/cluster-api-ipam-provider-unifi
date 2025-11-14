@@ -1,0 +1,261 @@
+/*
+Copyright 2024.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package webhooks
+
+import (
+	"context"
+	"reflect"
+	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+)
+
+func TestUnifiIPPoolWebhook_SetupWebhookWithManager(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		mgr ctrl.Manager
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			if err := w.SetupWebhookWithManager(tt.args.mgr); (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.SetupWebhookWithManager() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_Default(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		obj runtime.Object
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			if err := w.Default(context.Background(), tt.args.obj); (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.Default() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_ValidateCreate(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		obj runtime.Object
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    admission.Warnings
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			got, err := w.ValidateCreate(context.Background(), tt.args.obj)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.ValidateCreate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnifiIPPoolWebhook.ValidateCreate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_ValidateUpdate(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		oldObj runtime.Object
+		newObj runtime.Object
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    admission.Warnings
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			got, err := w.ValidateUpdate(context.Background(), tt.args.oldObj, tt.args.newObj)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnifiIPPoolWebhook.ValidateUpdate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_ValidateDelete(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		obj runtime.Object
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    admission.Warnings
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			got, err := w.ValidateDelete(context.Background(), tt.args.obj)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.ValidateDelete() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnifiIPPoolWebhook.ValidateDelete() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_validate(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		pool *ipamv1alpha1.UnifiIPPool
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			if err := w.validate(context.Background(), tt.args.pool); (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func Test_validateSubnet(t *testing.T) {
+	type args struct {
+		subnet  *ipamv1alpha1.SubnetSpec
+		fldPath *field.Path
+	}
+	tests := []struct {
+		name string
+		args args
+		want field.ErrorList
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validateSubnet(tt.args.subnet, tt.args.fldPath); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("validateSubnet() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnifiIPPoolWebhook_validateUpdate(t *testing.T) {
+	type fields struct {
+		Client client.Client
+	}
+	type args struct {
+		oldPool *ipamv1alpha1.UnifiIPPool
+		newPool *ipamv1alpha1.UnifiIPPool
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &UnifiIPPoolWebhook{
+				Client: tt.fields.Client,
+			}
+			if err := w.validateUpdate(context.Background(), tt.args.oldPool, tt.args.newPool); (err != nil) != tt.wantErr {
+				t.Errorf("UnifiIPPoolWebhook.validateUpdate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

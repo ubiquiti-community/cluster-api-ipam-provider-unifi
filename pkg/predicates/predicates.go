@@ -17,11 +17,12 @@ limitations under the License.
 package predicates
 
 import (
-	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ipamv1alpha1 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1alpha1"
+
+	"sigs.k8s.io/cluster-api/util/annotations"
 )
 
 // ResourceTransitionedToUnpaused returns a predicate that triggers on resources
@@ -53,7 +54,7 @@ func PoolNoLongerEmpty() predicate.Predicate {
 				return false
 			}
 
-			// Trigger if old had 0 free and new has > 0 free
+			// Trigger if old had 0 free and new has > 0 free.
 			return oldPool.Status.Addresses.Free == 0 && newPool.Status.Addresses.Free > 0
 		},
 	}

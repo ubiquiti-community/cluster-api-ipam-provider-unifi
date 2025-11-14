@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,8 +37,11 @@ import (
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/unifi"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/ipamutil"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/pkg/predicates"
+
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 )
+
+const unifiIPPoolKind = "UnifiIPPool"
 
 // UnifiProviderAdapter implements the ipamutil.ProviderAdapter interface.
 type UnifiProviderAdapter struct {
@@ -64,13 +68,13 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 				if !ok {
 					return false
 				}
-				return claim.Spec.PoolRef.Kind == "UnifiIPPool" &&
+				return claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
 					claim.Spec.PoolRef.APIGroup != nil &&
 					*claim.Spec.PoolRef.APIGroup == ipamv1alpha1.GroupVersion.Group
 			}),
 		)).
 		WithOptions(controller.Options{
-			// To avoid race conditions when allocating IP addresses
+			// To avoid race conditions when allocating IP addresses.
 			MaxConcurrentReconciles: 1,
 		}).
 		Watches(
@@ -93,7 +97,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 		return nil
 	}
 
-	// List all claims in the same namespace that reference this pool
+	// List all claims in the same namespace that reference this pool.
 	claimList := &ipamv1.IPAddressClaimList{}
 	if err := a.List(ctx, claimList, client.InNamespace(pool.Namespace)); err != nil {
 		return nil
@@ -102,7 +106,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 	requests := make([]reconcile.Request, 0)
 	for _, claim := range claimList.Items {
 		if claim.Spec.PoolRef.Name == pool.Name &&
-			claim.Spec.PoolRef.Kind == "UnifiIPPool" &&
+			claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
 			claim.Spec.PoolRef.APIGroup != nil &&
 			*claim.Spec.PoolRef.APIGroup == ipamv1alpha1.GroupVersion.Group {
 			requests = append(requests, reconcile.Request{
@@ -151,22 +155,62 @@ func (h *UnifiClaimHandler) FetchPool(ctx context.Context) (client.Object, *ctrl
 func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1.IPAddress) (*ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// Get all addresses currently in use from this pool
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, h.Client, h.pool.Namespace,
-		h.pool.Name, "UnifiIPPool", ipamv1alpha1.GroupVersion.Group)
+		h.pool.Name, unifiIPPoolKind, ipamv1alpha1.GroupVersion.Group)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses in use: %w", err)
 	}
 
-	// Check if this address is already allocated
-	for _, addr := range addressesInUse {
-		if addr.Name == address.Name && addr.Namespace == address.Namespace {
-			// Already allocated, nothing to do
-			return nil, nil
-		}
+	if h.isAddressAllocated(address, addressesInUse) {
+		return nil, nil
 	}
 
-	// Get UnifiInstance credentials
+	unifiClient, subnetSpec, err := h.setupAllocation(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return h.allocateIP(ctx, address, unifiClient, subnetSpec, addressesInUse, logger)
+}
+
+func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1.IPAddress, addressesInUse []ipamv1.IPAddress) bool {
+	for _, addr := range addressesInUse {
+		if addr.Name == address.Name && addr.Namespace == address.Namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client, *ipamv1alpha1.SubnetSpec, error) {
+	instance, err := h.getUnifiInstance(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	secret, err := h.getCredentialsSecret(ctx, instance)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	unifiClient, err := unifi.NewClient(unifi.Config{
+		Host:     instance.Spec.Host,
+		APIKey:   string(secret.Data["apiKey"]),
+		Site:     instance.Spec.Site,
+		Insecure: instance.Spec.Insecure,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create Unifi client: %w", err)
+	}
+
+	if len(h.pool.Spec.Subnets) == 0 {
+		return nil, nil, fmt.Errorf("pool has no subnets configured")
+	}
+
+	return unifiClient, &h.pool.Spec.Subnets[0], nil
+}
+
+func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*ipamv1alpha1.UnifiInstance, error) {
 	instance := &ipamv1alpha1.UnifiInstance{}
 	instanceKey := types.NamespacedName{
 		Name:      h.pool.Spec.InstanceRef.Name,
@@ -180,37 +224,23 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1.I
 		return nil, fmt.Errorf("failed to fetch UnifiInstance: %w", err)
 	}
 
-	// Get credentials from secret
+	return instance, nil
+}
+
+func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *ipamv1alpha1.UnifiInstance) (*corev1.Secret, error) {
 	var secret corev1.Secret
-	if err := h.Client.Get(ctx, types.NamespacedName{
+	if err := h.Get(ctx, types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,
 		Namespace: h.pool.Namespace,
 	}, &secret); err != nil {
 		return nil, fmt.Errorf("failed to get credentials secret: %w", err)
 	}
+	return &secret, nil
+}
 
-	// Create Unifi client
-	unifiClient, err := unifi.NewClient(unifi.Config{
-		Host:     instance.Spec.Host,
-		APIKey:   string(secret.Data["apiKey"]),
-		Site:     instance.Spec.Site,
-		Insecure: instance.Spec.Insecure,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Unifi client: %w", err)
-	}
-
-	// Generate MAC address for this allocation
-	// TODO: In production, use a more robust MAC generation or get from claim
+func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1.IPAddress, unifiClient *unifi.Client, subnetSpec *ipamv1alpha1.SubnetSpec, addressesInUse []ipamv1.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
-	// Use first subnet for now
-	if len(h.pool.Spec.Subnets) == 0 {
-		return nil, fmt.Errorf("pool has no subnets configured")
-	}
-	subnetSpec := &h.pool.Spec.Subnets[0]
-
-	// Allocate IP from Unifi
 	allocation, err := unifiClient.GetOrAllocateIP(
 		ctx,
 		h.pool.Spec.NetworkID,
@@ -223,7 +253,6 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1.I
 		return nil, fmt.Errorf("failed to allocate IP: %w", err)
 	}
 
-	// Update IPAddress spec
 	address.Spec.Address = allocation.IPAddress
 	address.Spec.Gateway = subnetSpec.Gateway
 	if subnetSpec.Prefix > 0 {
@@ -241,7 +270,7 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1.I
 // ReleaseAddress releases the IP address allocation.
 func (h *UnifiClaimHandler) ReleaseAddress(ctx context.Context) (*ctrl.Result, error) {
 	// The Unifi client's ReleaseIP method is a no-op for now
-	// The IPAddress resource deletion already handles deallocation tracking
+	// The IPAddress resource deletion already handles deallocation tracking.
 	return nil, nil
 }
 

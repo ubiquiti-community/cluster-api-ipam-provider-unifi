@@ -1,0 +1,117 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+    - make manifests
+    - go tool kustomize build config/default -o ipam-components.yaml
+
+builds:
+  - id: manager
+    main: ./cmd/manager
+    binary: manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    flags:
+      - -trimpath
+    skip: false
+
+upx:
+  - enabled: true
+    ids:
+      - manager
+    compress: best
+    lzma: true
+
+archives:
+  - id: manager
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: "Bug Fixes"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: "Documentation"
+      regexp: "^.*docs[(\\w)]*:+.*$"
+      order: 2
+    - title: "Other"
+      order: 999
+
+dockers_v2:
+  - id: tinkerbell
+    dockerfile: Dockerfile
+    images:
+      - '{{ envOrDefault "REGISTRY" "ghcr.io" }}/{{ envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git") }}'
+    tags:
+      - '{{ if eq ( envOrDefault "IS_RELEASE" "true" ) "true" }}v{{ .Version }}{{ end }}'
+      - "{{ if .IsNightly }}edge{{ end }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
+      - '{{ if eq .Branch "main" }}sha-{{ .ShortCommit }}{{ end }}'
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "v{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+
+docker_signs:
+  - cmd: cosign
+    args:
+      - "sign"
+      - "--yes"
+      - "${artifact}@${digest}"
+
+release:
+  github:
+    owner: ubiquiti-community
+    name: cluster-api-ipam-provider-unifi
+  draft: false
+  prerelease: auto
+  mode: append
+  make_latest: true
+  replace_existing_artifacts: true
+  extra_files:
+    - glob: ipam-components.yaml
+    - glob: metadata.yaml
+
+announce:
+  skip: true

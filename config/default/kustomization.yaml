@@ -1,10 +1,67 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ipam-system
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: unifi-ipam-controller-manager
-  namespace: ipam-system
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ipam-system
+
+namePrefix: unifi-ipam-
+
+# Labels to add to all resources and selectors
+commonLabels:
+  app.kubernetes.io/name: cluster-api-ipam-provider-unifi
+  app.kubernetes.io/component: controller
+
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager
+  - ../webhook
+
+# Patches
+patches:
+  # Protect the /metrics endpoint by putting it behind auth.
+  # If you want your controller-manager to expose the /metrics
+  # endpoint w/o any authn/z, please comment the following line.
+  - path: manager_auth_proxy_patch.yaml
+
+  # Mount the controller config file for loading manager configurations
+  # through a ComponentConfig type
+  #- path: manager_config_patch.yaml
+
+  # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
+  # crd/kustomization.yaml
+  - path: manager_webhook_patch.yaml
+
+  # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'.
+  # Uncomment 'CERTMANAGER' sections in crd/kustomization.yaml to enable the CA injection in the admission webhooks.
+  # 'CERTMANAGER' needs to be enabled to use ca injection
+  - path: webhookcainjection_patch.yaml
+
+replacements:
+  - source:
+      kind: Service
+      version: v1
+      name: webhook-service
+      fieldPath: .metadata.name
+    targets:
+      - select:
+          kind: MutatingWebhookConfiguration
+        fieldPaths:
+          - .webhooks.*.clientConfig.service.name
+      - select:
+          kind: ValidatingWebhookConfiguration
+        fieldPaths:
+          - .webhooks.*.clientConfig.service.name
+  - source:
+      kind: Service
+      version: v1
+      name: webhook-service
+      fieldPath: .metadata.namespace
+    targets:
+      - select:
+          kind: MutatingWebhookConfiguration
+        fieldPaths:
+          - .webhooks.*.clientConfig.service.namespace
+      - select:
+          kind: ValidatingWebhookConfiguration
+        fieldPaths:
+          - .webhooks.*.clientConfig.service.namespace
