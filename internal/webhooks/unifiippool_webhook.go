@@ -135,10 +135,8 @@ func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, obj runtime.Obj
 func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIPPool) error {
 	var allErrs field.ErrorList
 
-	// Validate NetworkID.
-	if pool.Spec.NetworkID == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec", "networkId"), "networkId is required"))
-	}
+	// NetworkID is now optional (can be auto-discovered)
+	// No validation needed
 
 	// Validate InstanceRef.
 	if pool.Spec.InstanceRef.Name == "" {
@@ -174,6 +172,9 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIP
 		allErrs = append(allErrs, validateSubnet(&subnet, subnetPath)...)
 	}
 
+	// Validate PreAllocations
+	allErrs = append(allErrs, validatePreAllocations(pool)...)
+
 	if len(allErrs) > 0 {
 		return allErrs.ToAggregate()
 	}
@@ -181,20 +182,123 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIP
 	return nil
 }
 
+// validatePreAllocations checks PreAllocations map for issues.
+func validatePreAllocations(pool *v1beta2.UnifiIPPool) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if len(pool.Spec.PreAllocations) == 0 {
+		return allErrs
+	}
+
+	// Get default prefix for IPInSubnets check
+	defaultPrefix := int32(24)
+	if pool.Spec.Prefix != nil {
+		defaultPrefix = *pool.Spec.Prefix
+	}
+
+	// Track seen IPs to detect duplicates
+	seenIPs := make(map[string]string) // IP -> claim name
+
+	for claimName, ipStr := range pool.Spec.PreAllocations {
+		preAllocPath := field.NewPath("spec", "preAllocations").Key(claimName)
+
+		// Validate IP format
+		_, err := netip.ParseAddr(ipStr)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(preAllocPath, ipStr, fmt.Sprintf("invalid IP address: %v", err)))
+			continue
+		}
+
+		// Check if IP is in configured subnets
+		if !poolutil.IPInSubnets(ipStr, pool.Spec.Subnets, defaultPrefix) {
+			allErrs = append(allErrs, field.Invalid(
+				preAllocPath,
+				ipStr,
+				fmt.Sprintf("preallocated IP %s is not within any configured subnet", ipStr),
+			))
+		}
+
+		// Check for duplicate IPs
+		if existingClaim, exists := seenIPs[ipStr]; exists {
+			allErrs = append(allErrs, field.Duplicate(
+				preAllocPath,
+				fmt.Sprintf("IP %s is already preallocated to claim %s", ipStr, existingClaim),
+			))
+		} else {
+			seenIPs[ipStr] = claimName
+		}
+	}
+
+	return allErrs
+}
+
 // validateSubnet validates a single subnet specification.
 func validateSubnet(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	cidr, err := netip.ParsePrefix(subnet.CIDR)
-	if err != nil {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("cidr"), subnet.CIDR, fmt.Sprintf("invalid CIDR: %v", err)))
-		return allErrs // Can't continue validation without valid CIDR.
+	// Validate that subnet has CIDR XOR Start/End
+	hasCIDR := subnet.CIDR != ""
+	hasRange := subnet.Start != "" || subnet.End != ""
+
+	if !hasCIDR && !hasRange {
+		allErrs = append(allErrs, field.Required(fldPath, "must specify either 'cidr' or both 'start' and 'end'"))
+		return allErrs
 	}
 
-	allErrs = append(allErrs, validatePrefix(subnet, cidr, fldPath)...)
-	allErrs = append(allErrs, validateGateway(subnet, cidr, fldPath)...)
-	allErrs = append(allErrs, validateExcludeRanges(subnet, cidr, fldPath)...)
-	allErrs = append(allErrs, validateDNS(subnet, fldPath)...)
+	if hasCIDR && hasRange {
+		allErrs = append(allErrs, field.Invalid(fldPath, subnet, "cannot specify both 'cidr' and 'start'/'end' - use one or the other"))
+		return allErrs
+	}
+
+	// If using CIDR notation
+	if hasCIDR {
+		cidr, err := netip.ParsePrefix(subnet.CIDR)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("cidr"), subnet.CIDR, fmt.Sprintf("invalid CIDR: %v", err)))
+			return allErrs
+		}
+
+		allErrs = append(allErrs, validatePrefix(subnet, cidr, fldPath)...)
+		allErrs = append(allErrs, validateGatewayInCIDR(subnet, cidr, fldPath)...)
+		allErrs = append(allErrs, validateExcludeRanges(subnet, cidr, fldPath)...)
+	} else {
+		// Using Start/End range notation
+		if subnet.Start == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("start"), "start is required when using range notation"))
+		}
+		if subnet.End == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("end"), "end is required when using range notation"))
+		}
+
+		if subnet.Start != "" && subnet.End != "" {
+			startIP, startErr := netip.ParseAddr(subnet.Start)
+			endIP, endErr := netip.ParseAddr(subnet.End)
+
+			if startErr != nil {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("start"), subnet.Start, fmt.Sprintf("invalid start IP: %v", startErr)))
+			}
+			if endErr != nil {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("end"), subnet.End, fmt.Sprintf("invalid end IP: %v", endErr)))
+			}
+
+			if startErr == nil && endErr == nil {
+				if startIP.Compare(endIP) > 0 {
+					allErrs = append(allErrs, field.Invalid(
+						fldPath.Child("start"),
+						subnet.Start,
+						fmt.Sprintf("start IP %s must be less than or equal to end IP %s", subnet.Start, subnet.End),
+					))
+				}
+
+				// Validate gateway is in range if specified
+				if subnet.Gateway != "" {
+					allErrs = append(allErrs, validateGatewayInRange(subnet, startIP, endIP, fldPath)...)
+				}
+			}
+		}
+	}
+
+	allErrs = append(allErrs, validateDNSServers(subnet, fldPath)...)
 
 	return allErrs
 }
@@ -213,8 +317,12 @@ func validatePrefix(subnet *v1beta2.SubnetSpec, cidr netip.Prefix, fldPath *fiel
 	return allErrs
 }
 
-func validateGateway(subnet *v1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
+func validateGatewayInCIDR(subnet *v1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
+
+	if subnet.Gateway == "" {
+		return allErrs // Gateway is optional
+	}
 
 	gateway, err := netip.ParseAddr(subnet.Gateway)
 	if err != nil {
@@ -227,6 +335,27 @@ func validateGateway(subnet *v1beta2.SubnetSpec, cidr netip.Prefix, fldPath *fie
 			fldPath.Child("gateway"),
 			subnet.Gateway,
 			fmt.Sprintf("gateway %s is not within CIDR %s", subnet.Gateway, subnet.CIDR),
+		))
+	}
+
+	return allErrs
+}
+
+func validateGatewayInRange(subnet *v1beta2.SubnetSpec, start, end netip.Addr, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	gateway, err := netip.ParseAddr(subnet.Gateway)
+	if err != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("gateway"), subnet.Gateway, fmt.Sprintf("invalid gateway IP: %v", err)))
+		return allErrs
+	}
+
+	// Check gateway is between start and end
+	if gateway.Compare(start) < 0 || gateway.Compare(end) > 0 {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("gateway"),
+			subnet.Gateway,
+			fmt.Sprintf("gateway %s is not within range %s-%s", subnet.Gateway, subnet.Start, subnet.End),
 		))
 	}
 
@@ -281,11 +410,11 @@ func validateExcludeRange(excludeRange string, cidr netip.Prefix, cidrStr string
 	return allErrs
 }
 
-func validateDNS(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
+func validateDNSServers(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	for j, dns := range subnet.DNS {
-		dnsPath := fldPath.Child("dns").Index(j)
+	for j, dns := range subnet.DNSServers {
+		dnsPath := fldPath.Child("dnsServers").Index(j)
 		if _, err := netip.ParseAddr(dns); err != nil {
 			allErrs = append(allErrs, field.Invalid(dnsPath, dns, fmt.Sprintf("invalid DNS server IP: %v", err)))
 		}

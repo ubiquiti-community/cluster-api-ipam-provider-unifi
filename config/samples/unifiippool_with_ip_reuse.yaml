@@ -1,0 +1,92 @@
+---
+# Example UnifiIPPool with IP reuse capability
+# This demonstrates the IP reuse feature for stable IP assignments across machine recreation
+apiVersion: ipam.cluster.x-k8s.io/v1beta2
+kind: UnifiIPPool
+metadata:
+  name: cluster-pool-with-reuse
+  namespace: default
+spec:
+  # Pool-level defaults
+  prefix: 24
+  gateway: "10.1.40.1"
+  dnsServers:
+    - "10.1.40.1"
+    - "8.8.8.8"
+
+  # Subnets configuration (supports CIDR or Start/End ranges)
+  subnets:
+    - cidr: "10.1.40.0/24"
+      # Subnet can override pool defaults:
+      # prefix: 24
+      # gateway: "10.1.40.1"
+      # dnsServers: ["10.1.40.1"]
+
+  # PreAllocations: Static IP assignments for specific machines
+  # Use cases:
+  # 1. STATIC ASSIGNMENT: Define predictable IPs from the start
+  # 2. IP REUSE: Copy Status.Allocations before upgrades to preserve IPs
+  preAllocations:
+    # Control plane nodes with static IPs
+    cluster-control-plane-0: "10.1.40.10"
+    cluster-control-plane-1: "10.1.40.11"
+    cluster-control-plane-2: "10.1.40.12"
+    # Important worker nodes
+    cluster-worker-ingress-0: "10.1.40.20"
+    cluster-worker-ingress-1: "10.1.40.21"
+
+  # Reference to UnifiInstance for API access
+  instanceRef:
+    name: unifi-controller
+    namespace: default
+
+  # NetworkID is optional - will auto-discover if not provided
+  # networkID: "507f1f77bcf86cd799439011"
+
+---
+# Example UnifiIPPool using IP range notation instead of CIDR
+apiVersion: ipam.cluster.x-k8s.io/v1beta2
+kind: UnifiIPPool
+metadata:
+  name: cluster-pool-range
+  namespace: default
+spec:
+  prefix: 24
+  gateway: "10.1.50.1"
+  dnsServers:
+    - "10.1.50.1"
+
+  # Using Start/End ranges instead of CIDR
+  subnets:
+    - start: "10.1.50.10"
+      end: "10.1.50.50"
+      # Will use pool-level prefix, gateway, DNS
+    - start: "10.1.50.60"
+      end: "10.1.50.100"
+      # Second range for additional capacity
+
+  instanceRef:
+    name: unifi-controller
+    namespace: default
+
+---
+# Example workflow for IP reuse during cluster upgrades:
+#
+# STEP 1: Initial deployment (no PreAllocations)
+# - Pool allocates IPs dynamically
+# - Status.Allocations tracks current assignments
+#
+# STEP 2: Before upgrade, preserve IPs:
+#   kubectl get unifiippool cluster-pool -o json | \
+#     jq '.status.allocations' | \
+#     kubectl patch unifiippool cluster-pool --type=merge -p \
+#       '{"spec":{"preAllocations":'$(cat -)'}}}'
+#
+# STEP 3: Perform rolling upgrade
+# - Machines are deleted and recreated
+# - New IPAddressClaims created with same names
+# - Provider checks PreAllocations first → same IPs assigned
+#
+# STEP 4: Verify IP reuse:
+#   kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}'
+#   # Should match spec.preAllocations
