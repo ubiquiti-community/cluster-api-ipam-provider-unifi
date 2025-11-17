@@ -28,73 +28,123 @@ type UnifiIPPoolSpec struct {
 	InstanceRef corev1.ObjectReference `json:"instanceRef"`
 
 	// NetworkID is the Unifi network ID to allocate from
+	// DEPRECATED: Use auto-discovery instead. If set, skips auto-discovery.
 	// This is the _id field from the Unifi network configuration
-	// +kubebuilder:validation:Required
-	NetworkID string `json:"networkId"`
+	// +optional
+	NetworkID string `json:"networkId,omitempty"`
 
 	// Subnets is the list of subnets to allocate from
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	Subnets []SubnetSpec `json:"subnets"`
+
+	// PreAllocations maps IPAddressClaim names to specific IP addresses
+	// Used for static IP assignment and IP reuse across machine recreation
+	// Takes priority over dynamic allocation
+	// Example: {"cluster-control-plane-0": "10.1.40.10"}
+	// +optional
+	PreAllocations map[string]string `json:"preAllocations,omitempty"`
+
+	// Prefix is the default network prefix length (e.g., 24 for /24)
+	// Can be overridden per subnet
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=128
+	// +optional
+	Prefix *int32 `json:"prefix,omitempty"`
+
+	// Gateway is the default gateway IP address
+	// Can be overridden per subnet. This IP is never allocated.
+	// +optional
+	Gateway string `json:"gateway,omitempty"`
+
+	// DNSServers is the default list of DNS servers
+	// Can be overridden per subnet
+	// +optional
+	DNSServers []string `json:"dnsServers,omitempty"`
 }
 
 // SubnetSpec defines a subnet configuration.
+// Supports either CIDR notation OR Start/End IP range (mutually exclusive).
 type SubnetSpec struct {
-	// CIDR is the subnet CIDR block
-	// +kubebuilder:validation:Required
+	// CIDR is the subnet CIDR block (e.g., "10.1.40.0/24")
+	// Mutually exclusive with Start/End
 	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
-	CIDR string `json:"cidr"`
+	// +optional
+	CIDR string `json:"cidr,omitempty"`
 
-	// Gateway is the gateway IP address for this subnet
-	// +kubebuilder:validation:Required
+	// Start is the first IP address in the range (e.g., "10.1.40.10")
+	// Requires End field. Mutually exclusive with CIDR.
 	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}$`
-	Gateway string `json:"gateway"`
+	// +optional
+	Start string `json:"start,omitempty"`
 
-	// Prefix is the network prefix length
-	// +kubebuilder:validation:Required
+	// End is the last IP address in the range (e.g., "10.1.40.50")
+	// Requires Start field. Mutually exclusive with CIDR.
+	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}$`
+	// +optional
+	End string `json:"end,omitempty"`
+
+	// Gateway overrides the pool-level gateway for this subnet
+	// +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}$`
+	// +optional
+	Gateway string `json:"gateway,omitempty"`
+
+	// Prefix overrides the pool-level prefix for this subnet
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=32
-	Prefix *int32 `json:"prefix"`
+	// +optional
+	Prefix *int32 `json:"prefix,omitempty"`
 
 	// ExcludeRanges is a list of IP ranges to exclude from allocation
 	// Format: "start-end" (e.g., "192.168.1.1-192.168.1.10")
-	// +optional.
+	// +optional
 	ExcludeRanges []string `json:"excludeRanges,omitempty"`
 
-	// DNS is the list of DNS servers for this subnet
-	// +optional.
-	DNS []string `json:"dns,omitempty"`
+	// DNSServers overrides the pool-level DNS servers for this subnet
+	// +optional
+	DNSServers []string `json:"dnsServers,omitempty"`
 }
 
 // UnifiIPPoolStatus defines the observed state of UnifiIPPool.
 type UnifiIPPoolStatus struct {
+	// Allocations tracks current IP assignments (claim name → IP address)
+	// Automatically populated by watching IPAddress resources
+	// Can be copied to Spec.PreAllocations before cluster upgrades for IP reuse
+	// +optional
+	Allocations map[string]string `json:"allocations,omitempty"`
+
+	// DiscoveredNetworkID is the auto-discovered Unifi network ID
+	// Populated by matching configured subnets to Unifi network ranges
+	// +optional
+	DiscoveredNetworkID string `json:"discoveredNetworkID,omitempty"`
+
 	// Addresses provides summary statistics about address allocation
-	// +optional.
+	// +optional
 	Addresses *IPAddressStatusSummary `json:"addresses,omitempty"`
 
 	// Capacity provides utilization metrics for the pool
-	// +optional.
+	// +optional
 	Capacity *PoolCapacity `json:"capacity,omitempty"`
 
 	// NetworkInfo contains information about the Unifi network
-	// +optional.
+	// +optional
 	NetworkInfo *NetworkInfo `json:"networkInfo,omitempty"`
 
 	// AllocationDetails tracks detailed allocation information
-	// +optional.
+	// +optional
 	AllocationDetails *AllocationDetails `json:"allocationDetails,omitempty"`
 
 	// Conditions defines current state of the UnifiIPPool using metav1.Conditions
-	// +optional.
+	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// LastSyncTime is the last time the pool was successfully synced with Unifi
-	// +optional.
+	// +optional
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
 	// ObservedNetworkConfiguration contains the network config last observed from Unifi
 	// Used to detect drift between Kubernetes and Unifi state
-	// +optional.
+	// +optional
 	ObservedNetworkConfiguration *ObservedNetworkConfig `json:"observedNetworkConfig,omitempty"`
 }
 
@@ -237,10 +287,10 @@ type AllocatedIP struct {
 // UnifiIPPool is the Schema for the unifiippools API.
 type UnifiIPPool struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec   UnifiIPPoolSpec   `json:"spec"`
-	Status UnifiIPPoolStatus `json:"status"`
+	Status UnifiIPPoolStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

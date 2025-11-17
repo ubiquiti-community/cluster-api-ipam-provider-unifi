@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -250,12 +251,22 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.Client, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
+	// Use network ID from pool (either configured or discovered)
+	networkID := h.pool.Spec.NetworkID
+	if networkID == "" {
+		networkID = h.pool.Status.DiscoveredNetworkID
+	}
+	if networkID == "" {
+		return nil, fmt.Errorf("no network ID available (neither configured nor discovered)")
+	}
+
 	allocation, err := unifiClient.GetOrAllocateIP(
 		ctx,
-		h.pool.Spec.NetworkID,
+		h.pool,
+		h.claim,
+		networkID,
 		macAddress,
 		h.claim.Name,
-		subnetSpec,
 		addressesInUse,
 	)
 	if err != nil {
@@ -263,15 +274,24 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 	}
 
 	address.Spec.Address = allocation.IPAddress
-	address.Spec.Gateway = subnetSpec.Gateway
-	if subnetSpec.Prefix != nil && *subnetSpec.Prefix > 0 {
-		address.Spec.Prefix = subnetSpec.Prefix
+	address.Spec.Gateway = allocation.Gateway
+	if allocation.Prefix > 0 {
+		address.Spec.Prefix = &allocation.Prefix
 	}
+
+	// Store MAC address in labels for future cleanup
+	if address.Labels == nil {
+		address.Labels = make(map[string]string)
+	}
+	// Replace colons with dashes to comply with Kubernetes label requirements
+	address.Labels["unifi.ipam.cluster.x-k8s.io/mac"] = strings.ReplaceAll(macAddress, ":", "-")
 
 	logger.Info("allocated IP address",
 		"claim", h.claim.Name,
 		"address", allocation.IPAddress,
-		"mac", macAddress)
+		"mac", macAddress,
+		"prefix", allocation.Prefix,
+		"gateway", allocation.Gateway)
 
 	return nil, nil
 }

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -94,6 +95,19 @@ func (r *UnifiIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if instance.Status.Ready == nil || !*instance.Status.Ready {
 		logger.Info("waiting for UnifiInstance to be ready", "instance", client.ObjectKeyFromObject(instance))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Discover Unifi network if needed (when NetworkID not configured)
+	if pool.Spec.NetworkID == "" && pool.Status.DiscoveredNetworkID == "" {
+		if err := r.discoverNetwork(ctx, pool, instance, logger); err != nil {
+			logger.Error(err, "failed to discover Unifi network")
+			// Set condition and requeue
+			r.updateNetworkDiscoveryCondition(pool, err)
+			if err := r.Status().Update(ctx, pool); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
+		}
 	}
 
 	poolIPSet, err := r.buildPoolIPSet(pool, logger)
@@ -202,6 +216,15 @@ func (r *UnifiIPPoolReconciler) updatePoolStatus(ctx context.Context, pool *v1be
 
 	// Update allocation details
 	pool.Status.AllocationDetails = r.buildAllocationDetails(addressesInUse, pool)
+
+	// Update Status.Allocations map (claim name → IP address)
+	// This enables IP reuse workflows by providing visibility into current assignments
+	pool.Status.Allocations = make(map[string]string)
+	for _, addr := range addressesInUse {
+		if addr.Spec.ClaimRef.Name != "" && addr.Spec.Address != "" {
+			pool.Status.Allocations[addr.Spec.ClaimRef.Name] = addr.Spec.Address
+		}
+	}
 
 	// Add finalizer if addresses in use
 	if len(addressesInUse) > 0 {
@@ -337,14 +360,23 @@ func (r *UnifiIPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2
 		return fmt.Errorf("failed to create Unifi client: %w", err)
 	}
 
+	// Determine network ID to use (configured or discovered)
+	networkID := pool.Spec.NetworkID
+	if networkID == "" {
+		networkID = pool.Status.DiscoveredNetworkID
+	}
+	if networkID == "" {
+		return fmt.Errorf("no network ID available (neither configured nor discovered)")
+	}
+
 	// Sync network configuration from Unifi
-	subnetSpec, err := unifiClient.SyncNetworkToCIDR(ctx, pool.Spec.NetworkID)
+	subnetSpec, err := unifiClient.SyncNetworkToCIDR(ctx, networkID)
 	if err != nil {
 		return fmt.Errorf("failed to sync network config: %w", err)
 	}
 
 	// Get network details for DHCP info
-	network, err := unifiClient.GetNetwork(ctx, pool.Spec.NetworkID)
+	network, err := unifiClient.GetNetwork(ctx, networkID)
 	if err != nil {
 		return fmt.Errorf("failed to get network details: %w", err)
 	}
@@ -577,6 +609,84 @@ func (r *UnifiIPPoolReconciler) createUnifiClient(ctx context.Context, instance 
 		Site:     site,
 		Insecure: insecure,
 	})
+}
+
+// discoverNetwork attempts to auto-discover the Unifi network that contains the configured subnets.
+func (r *UnifiIPPoolReconciler) discoverNetwork(ctx context.Context, pool *v1beta2.UnifiIPPool, instance *v1beta2.UnifiInstance, logger logr.Logger) error {
+	if len(pool.Spec.Subnets) == 0 {
+		return fmt.Errorf("no subnets configured in pool")
+	}
+
+	unifiClient, err := r.createUnifiClient(ctx, instance, pool.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create Unifi client: %w", err)
+	}
+
+	// Try to discover network for first subnet
+	// (In future, could validate all subnets are in same network)
+	firstSubnet := pool.Spec.Subnets[0]
+
+	// Convert subnet to CIDR string if using Start/End notation
+	subnetCIDR := firstSubnet.CIDR
+	if subnetCIDR == "" && firstSubnet.Start != "" {
+		// For Start/End ranges, construct a CIDR from the start address and prefix
+		// Must apply network mask to get proper network address (not host address)
+		defaultPrefix := int32(24)
+		if pool.Spec.Prefix != nil {
+			defaultPrefix = *pool.Spec.Prefix
+		}
+		prefix := poolutil.GetPrefix(firstSubnet, defaultPrefix)
+		
+		// Parse start address and apply prefix to get network address
+		startAddr, err := netip.ParseAddr(firstSubnet.Start)
+		if err != nil {
+			return fmt.Errorf("invalid start address %s: %w", firstSubnet.Start, err)
+		}
+		
+		// Create prefix and mask to network address
+		prefixObj := netip.PrefixFrom(startAddr, int(prefix))
+		networkAddr := prefixObj.Masked().Addr()
+		subnetCIDR = fmt.Sprintf("%s/%d", networkAddr.String(), prefix)
+	}
+
+	if subnetCIDR == "" {
+		return fmt.Errorf("cannot determine subnet CIDR for network discovery")
+	}
+
+	network, err := unifiClient.FindNetworkForSubnet(ctx, subnetCIDR)
+	if err != nil {
+		return fmt.Errorf("failed to find network for subnet %s: %w", subnetCIDR, err)
+	}
+
+	// Update discovered network ID in status
+	pool.Status.DiscoveredNetworkID = network.ID
+	logger.Info("discovered Unifi network for pool",
+		"network_id", network.ID,
+		"network_name", network.Name,
+		"subnet", subnetCIDR)
+
+	return nil
+}
+
+// updateNetworkDiscoveryCondition sets the NetworkDiscovery condition based on discovery result.
+func (r *UnifiIPPoolReconciler) updateNetworkDiscoveryCondition(pool *v1beta2.UnifiIPPool, err error) {
+	condition := metav1.Condition{
+		Type:               "NetworkDiscovered",
+		ObservedGeneration: pool.Generation,
+		LastTransitionTime: metav1.Now(),
+	}
+
+	if err != nil {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "DiscoveryFailed"
+		condition.Message = fmt.Sprintf("Failed to discover Unifi network: %v", err)
+	} else {
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = "NetworkFound"
+		condition.Message = fmt.Sprintf("Discovered network: %s", pool.Status.DiscoveredNetworkID)
+	}
+
+	r.setCondition(pool, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.
