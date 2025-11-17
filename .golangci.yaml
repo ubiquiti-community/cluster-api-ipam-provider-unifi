@@ -99,6 +99,9 @@ linters:
           alias: v1beta2
     misspell:
       locale: US
+    modernize:
+      disable:
+        - omitzero
     nolintlint:
       require-explanation: true
       require-specific: true

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -282,7 +283,8 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 	if address.Labels == nil {
 		address.Labels = make(map[string]string)
 	}
-	address.Labels["unifi.ipam.cluster.x-k8s.io/mac"] = macAddress
+	// Replace colons with dashes to comply with Kubernetes label requirements
+	address.Labels["unifi.ipam.cluster.x-k8s.io/mac"] = strings.ReplaceAll(macAddress, ":", "-")
 
 	logger.Info("allocated IP address",
 		"claim", h.claim.Name,

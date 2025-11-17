@@ -130,9 +130,7 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 	}
 	tests := []struct {
 		name    string
-		fields  fields
-		args    args
-		want    *IPAllocation
+		fields  args    want    *IPAllocation
 		wantErr bool
 	}{
 		// TODO: Add test cases.
@@ -153,7 +151,6 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 			}
 		})
 	}
-}
 */
 
 // TestClient_allocateNextIP tests the allocateNextIP function.
@@ -173,9 +170,7 @@ func TestClient_allocateNextIP(t *testing.T) {
 	}
 	tests := []struct {
 		name        string
-		fields      fields
-		args        args
-		wantIP      string
+		fields      args        wantIP      string
 		wantPrefix  int32
 		wantGateway string
 		wantErr     bool
@@ -204,7 +199,6 @@ func TestClient_allocateNextIP(t *testing.T) {
 			}
 		})
 	}
-}
 */
 
 func TestClient_ReleaseIP(t *testing.T) {

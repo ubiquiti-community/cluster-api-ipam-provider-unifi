@@ -152,34 +152,71 @@ func firstUsableIP(prefix netip.Prefix) netip.Addr {
 // For IPv4, this skips the broadcast address (last IP in the range).
 // For IPv6, returns the last IP in the prefix.
 func lastUsableIP(prefix netip.Prefix) netip.Addr {
-	// Get the last IP in the prefix
-	lastIP := prefix.Addr()
+	// Use bit manipulation to calculate the last IP directly
+	// instead of iterating through all addresses
 	mask := prefix.Masked().Addr()
-
-	// Calculate the last IP by adding the range
 	bits := prefix.Bits()
-	hostBits := 32 - bits
-	if lastIP.Is6() {
-		hostBits = 128 - bits
+	
+	if mask.Is4() {
+		// IPv4: Calculate last IP using bit operations
+		maskBytes := mask.As4()
+		hostBits := 32 - bits
+		
+		// Create a mask with all host bits set
+		hostMask := uint32((1 << hostBits) - 1)
+		
+		// Convert IP to uint32
+		ipUint := uint32(maskBytes[0])<<24 | uint32(maskBytes[1])<<16 | 
+			uint32(maskBytes[2])<<8 | uint32(maskBytes[3])
+		
+		// Set all host bits (this gives broadcast address)
+		broadcastUint := ipUint | hostMask
+		
+		// Subtract 1 to get last usable IP (skip broadcast)
+		lastUsableUint := broadcastUint - 1
+		
+		// Convert back to netip.Addr
+		return netip.AddrFrom4([4]byte{
+			byte(lastUsableUint >> 24),
+			byte(lastUsableUint >> 16),
+			byte(lastUsableUint >> 8),
+			byte(lastUsableUint),
+		})
 	}
-
-	// Start from the network address
-	current := mask
-	// Add 2^hostBits - 1 to get to the last IP
-	for i := 0; i < (1<<hostBits)-1; i++ {
-		next := current.Next()
-		if !next.IsValid() {
-			break
-		}
-		current = next
+	
+	// IPv6: Calculate last IP using bit operations
+	maskBytes := mask.As16()
+	hostBits := 128 - bits
+	
+	// Convert to two uint64s (high and low 64 bits)
+	high := uint64(maskBytes[0])<<56 | uint64(maskBytes[1])<<48 |
+		uint64(maskBytes[2])<<40 | uint64(maskBytes[3])<<32 |
+		uint64(maskBytes[4])<<24 | uint64(maskBytes[5])<<16 |
+		uint64(maskBytes[6])<<8 | uint64(maskBytes[7])
+	low := uint64(maskBytes[8])<<56 | uint64(maskBytes[9])<<48 |
+		uint64(maskBytes[10])<<40 | uint64(maskBytes[11])<<32 |
+		uint64(maskBytes[12])<<24 | uint64(maskBytes[13])<<16 |
+		uint64(maskBytes[14])<<8 | uint64(maskBytes[15])
+	
+	// Set all host bits
+	if hostBits <= 64 {
+		// All host bits are in the low part
+		hostMask := (uint64(1) << hostBits) - 1
+		low |= hostMask
+	} else {
+		// Host bits span both parts
+		lowBits := hostBits - 64
+		high |= (uint64(1) << lowBits) - 1
+		low = 0xFFFFFFFFFFFFFFFF
 	}
-
-	// For IPv4, skip broadcast address (last IP)
-	if lastIP.Is4() && current.IsValid() {
-		current = current.Prev()
-	}
-
-	return current
+	
+	// For IPv6, we return the last IP (no broadcast address to skip)
+	return netip.AddrFrom16([16]byte{
+		byte(high >> 56), byte(high >> 48), byte(high >> 40), byte(high >> 32),
+		byte(high >> 24), byte(high >> 16), byte(high >> 8), byte(high),
+		byte(low >> 56), byte(low >> 48), byte(low >> 40), byte(low >> 32),
+		byte(low >> 24), byte(low >> 16), byte(low >> 8), byte(low),
+	})
 }
 
 // GetPrefix returns the prefix to use for a subnet, considering overrides.

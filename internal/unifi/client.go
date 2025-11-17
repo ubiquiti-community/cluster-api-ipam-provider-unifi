@@ -18,6 +18,7 @@ package unifi
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -207,12 +208,47 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 	// First, check if this MAC already has a fixed IP assignment via User object.
 	existingUser, err := c.client.GetUserByMAC(ctx, c.site, macAddress)
 	if err == nil && existingUser != nil {
-		// User exists - return existing allocation.
+		// User exists - return existing allocation with Prefix and Gateway.
+		// Need to determine prefix and gateway from pool config.
+		defaultPrefix := int32(24)
+		if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
+			defaultPrefix = *pool.Spec.Prefix
+		}
+
+		// Find subnet containing the existing IP to get accurate prefix/gateway
+		prefix := defaultPrefix
+		gateway := pool.Spec.Gateway
+		addr, err := netip.ParseAddr(existingUser.FixedIP)
+		if err == nil {
+			for _, subnet := range pool.Spec.Subnets {
+				// Check if IP is in this subnet
+				var contains bool
+				if subnet.CIDR != "" {
+					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
+						contains = subnetPrefix.Contains(addr)
+					}
+				} else if subnet.Start != "" && subnet.End != "" {
+					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
+						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
+							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
+						}
+					}
+				}
+				if contains {
+					prefix = poolutil.GetPrefix(subnet, defaultPrefix)
+					gateway = poolutil.GetGateway(subnet, pool.Spec.Gateway)
+					break
+				}
+			}
+		}
+
 		return &IPAllocation{
 			IPAddress:  existingUser.FixedIP,
 			MacAddress: existingUser.MAC,
 			Hostname:   existingUser.Hostname,
 			UseFixedIP: existingUser.UseFixedIP,
+			Prefix:     prefix,
+			Gateway:    gateway,
 		}, nil
 	}
 
@@ -268,8 +304,11 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 // 2. Annotation request (claim specifies desired IP)
 // 3. Dynamic allocation (iterate through subnets)
 func (c *Client) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
-	if pool == nil || len(pool.Spec.Subnets) == 0 {
-		return "", 0, "", fmt.Errorf("pool or subnets are nil/empty")
+	if pool == nil {
+		return "", 0, "", fmt.Errorf("pool is nil")
+	}
+	if len(pool.Spec.Subnets) == 0 {
+		return "", 0, "", fmt.Errorf("pool has no configured subnets")
 	}
 
 	// Get default prefix for validation
@@ -319,21 +358,26 @@ func (c *Client) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, 
 			for _, subnet := range pool.Spec.Subnets {
 				prefix := poolutil.GetPrefix(subnet, defaultPrefix)
 				gateway := poolutil.GetGateway(subnet, pool.Spec.Gateway)
-				
+
 				addr, err := netip.ParseAddr(prealloc)
 				if err != nil {
 					continue
 				}
 
 				// Check if IP is in this subnet
-				var subnetPrefix netip.Prefix
+				var contains bool
 				if subnet.CIDR != "" {
-					subnetPrefix, err = netip.ParsePrefix(subnet.CIDR)
+					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
+						contains = subnetPrefix.Contains(addr)
+					}
 				} else if subnet.Start != "" && subnet.End != "" {
-					startAddr, _ := netip.ParseAddr(subnet.Start)
-					subnetPrefix = netip.PrefixFrom(startAddr, int(prefix))
+					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
+						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
+							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
+						}
+					}
 				}
-				if err == nil && subnetPrefix.Contains(addr) {
+				if contains {
 					return prealloc, prefix, gateway, nil
 				}
 			}
@@ -373,20 +417,26 @@ func (c *Client) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, 
 			for _, subnet := range pool.Spec.Subnets {
 				prefix := poolutil.GetPrefix(subnet, defaultPrefix)
 				gateway := poolutil.GetGateway(subnet, pool.Spec.Gateway)
-				
+
 				addr, err := netip.ParseAddr(requestedIP)
 				if err != nil {
 					continue
 				}
 
-				var subnetPrefix netip.Prefix
+				// Check if IP is in this subnet
+				var contains bool
 				if subnet.CIDR != "" {
-					subnetPrefix, err = netip.ParsePrefix(subnet.CIDR)
+					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
+						contains = subnetPrefix.Contains(addr)
+					}
 				} else if subnet.Start != "" && subnet.End != "" {
-					startAddr, _ := netip.ParseAddr(subnet.Start)
-					subnetPrefix = netip.PrefixFrom(startAddr, int(prefix))
+					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
+						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
+							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
+						}
+					}
 				}
-				if err == nil && subnetPrefix.Contains(addr) {
+				if contains {
 					return requestedIP, prefix, gateway, nil
 				}
 			}
@@ -448,8 +498,14 @@ func (c *Client) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, 
 }
 
 // generateMACForClaim generates a deterministic MAC address for a claim name.
+// Uses SHA256 to avoid collisions that would occur with simple length-based hashing.
 func generateMACForClaim(claimName string) string {
-	return fmt.Sprintf("00:00:00:00:00:%02x", len(claimName)%256)
+	// Use SHA256 to generate a deterministic hash
+	h := sha256.Sum256([]byte(claimName))
+
+	// Use first 5 bytes from hash, with locally administered bit set
+	// 02:xx:xx:xx:xx:xx format ensures it's a locally administered unicast MAC
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", h[0], h[1], h[2], h[3], h[4])
 }
 
 // getExistingClientIPs retrieves all currently active/leased IPs from Unifi clients.

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -624,17 +625,28 @@ func (r *UnifiIPPoolReconciler) discoverNetwork(ctx context.Context, pool *v1bet
 	// Try to discover network for first subnet
 	// (In future, could validate all subnets are in same network)
 	firstSubnet := pool.Spec.Subnets[0]
-	
+
 	// Convert subnet to CIDR string if using Start/End notation
 	subnetCIDR := firstSubnet.CIDR
 	if subnetCIDR == "" && firstSubnet.Start != "" {
 		// For Start/End ranges, construct a CIDR from the start address and prefix
+		// Must apply network mask to get proper network address (not host address)
 		defaultPrefix := int32(24)
 		if pool.Spec.Prefix != nil {
 			defaultPrefix = *pool.Spec.Prefix
 		}
 		prefix := poolutil.GetPrefix(firstSubnet, defaultPrefix)
-		subnetCIDR = fmt.Sprintf("%s/%d", firstSubnet.Start, prefix)
+		
+		// Parse start address and apply prefix to get network address
+		startAddr, err := netip.ParseAddr(firstSubnet.Start)
+		if err != nil {
+			return fmt.Errorf("invalid start address %s: %w", firstSubnet.Start, err)
+		}
+		
+		// Create prefix and mask to network address
+		prefixObj := netip.PrefixFrom(startAddr, int(prefix))
+		networkAddr := prefixObj.Masked().Addr()
+		subnetCIDR = fmt.Sprintf("%s/%d", networkAddr.String(), prefix)
 	}
 
 	if subnetCIDR == "" {

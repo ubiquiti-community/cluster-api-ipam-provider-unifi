@@ -246,7 +246,7 @@ func validateSubnet(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.Error
 	}
 
 	if hasCIDR && hasRange {
-		allErrs = append(allErrs, field.Invalid(fldPath, subnet, "cannot specify both 'cidr' and 'start'/'end' - use one or the other"))
+		allErrs = append(allErrs, field.Invalid(fldPath, fmt.Sprintf("CIDR=%s, Start=%s, End=%s", subnet.CIDR, subnet.Start, subnet.End), "cannot specify both 'cidr' and 'start'/'end' - use one or the other"))
 		return allErrs
 	}
 

@@ -94,13 +94,30 @@ func PoolSpecToIPSet(poolSpec *v1beta2.SubnetSpec) (*netipx.IPSet, error) {
 
 	var builder netipx.IPSetBuilder
 
-	// Parse the CIDR.
-	prefix, err := netip.ParsePrefix(poolSpec.CIDR)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CIDR %s: %w", poolSpec.CIDR, err)
+	// Handle CIDR notation
+	if poolSpec.CIDR != "" {
+		prefix, err := netip.ParsePrefix(poolSpec.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse CIDR %s: %w", poolSpec.CIDR, err)
+		}
+		builder.AddPrefix(prefix)
+	} else if poolSpec.Start != "" && poolSpec.End != "" {
+		// Handle Start/End range notation
+		startIP, err := netip.ParseAddr(poolSpec.Start)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse start IP %s: %w", poolSpec.Start, err)
+		}
+		endIP, err := netip.ParseAddr(poolSpec.End)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse end IP %s: %w", poolSpec.End, err)
+		}
+		
+		// Create a range and add to builder
+		ipRange := netipx.IPRangeFrom(startIP, endIP)
+		builder.AddRange(ipRange)
+	} else {
+		return nil, fmt.Errorf("subnet must specify either CIDR or Start/End range")
 	}
-
-	builder.AddPrefix(prefix)
 
 	// Remove gateway from the pool.
 	if poolSpec.Gateway != "" {
@@ -130,10 +147,14 @@ func PoolSpecToIPSet(poolSpec *v1beta2.SubnetSpec) (*netipx.IPSet, error) {
 		// A more robust implementation would parse "10.0.0.1-10.0.0.10" format.
 	}
 
-	// Remove network and broadcast addresses.
-	r := netipx.RangeOfPrefix(prefix)
-	builder.Remove(r.From())
-	builder.Remove(r.To())
+	// For CIDR notation, remove network and broadcast addresses
+	if poolSpec.CIDR != "" {
+		prefix, _ := netip.ParsePrefix(poolSpec.CIDR)
+		r := netipx.RangeOfPrefix(prefix)
+		builder.Remove(r.From())
+		builder.Remove(r.To())
+	}
+	// For Start/End ranges, the user explicitly defines the range, so we don't remove endpoints
 
 	ipSet, err := builder.IPSet()
 	return ipSet, err

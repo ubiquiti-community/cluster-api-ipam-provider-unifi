@@ -287,10 +287,10 @@ type AllocatedIP struct {
 // UnifiIPPool is the Schema for the unifiippools API.
 type UnifiIPPool struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec   UnifiIPPoolSpec   `json:"spec"`
-	Status UnifiIPPoolStatus `json:"status"`
+	Status UnifiIPPoolStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

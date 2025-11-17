@@ -77,10 +77,8 @@ spec:
 # - Status.Allocations tracks current assignments
 #
 # STEP 2: Before upgrade, preserve IPs:
-#   kubectl get unifiippool cluster-pool -o json | \
-#     jq '.status.allocations' | \
-#     kubectl patch unifiippool cluster-pool --type=merge -p \
-#       '{"spec":{"preAllocations":'$(cat -)'}}}'
+#   ALLOCS=$(kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}')
+#   kubectl patch unifiippool cluster-pool --type=merge -p "{\"spec\":{\"preAllocations\":$ALLOCS}}"
 #
 # STEP 3: Perform rolling upgrade
 # - Machines are deleted and recreated
