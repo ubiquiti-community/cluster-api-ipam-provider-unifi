@@ -56,7 +56,7 @@ jobs:
           IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Upload install manifest
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: install-manifest
           path: dist/install.yaml
