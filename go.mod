@@ -5,7 +5,7 @@ go 1.25.4
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/pkg/errors v0.9.1
-	github.com/ubiquiti-community/go-unifi v1.33.15
+	github.com/ubiquiti-community/go-unifi v1.33.16
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
@@ -35,6 +35,8 @@ require (
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
+	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
