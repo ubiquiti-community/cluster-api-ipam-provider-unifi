@@ -3,7 +3,7 @@ module github.com/ubiquiti-community/cluster-api-ipam-provider-unifi
 go 1.26.0
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/pkg/errors v0.9.1
 	github.com/ubiquiti-community/go-unifi v1.33.42
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
