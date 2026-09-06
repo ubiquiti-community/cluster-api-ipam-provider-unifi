@@ -39,8 +39,10 @@ type UnifiInstanceWebhook struct {
 // SetupWebhookWithManager registers the webhook with the controller manager.
 func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&v1beta2.UnifiInstance{}).
+	// The builder is instantiated at runtime.Object rather than at
+	// *v1beta2.UnifiInstance because Default and the Validate* methods below take
+	// runtime.Object and assert the concrete type themselves.
+	return ctrl.NewWebhookManagedBy[runtime.Object](mgr, &v1beta2.UnifiInstance{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
