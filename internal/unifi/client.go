@@ -45,7 +45,7 @@ type Config struct {
 
 // Client wraps the Unifi API client with IPAM-specific operations.
 type Client struct {
-	client *unifi.Client
+	client *unifi.ApiClient
 	site   string
 }
 
@@ -206,7 +206,7 @@ func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1be
 // GetOrAllocateIP gets an existing IP or allocates a new one.
 func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
 	// First, check if this MAC already has a fixed IP assignment via User object.
-	existingUser, err := c.client.GetUserByMAC(ctx, c.site, macAddress)
+	existingUser, err := c.client.GetClientByMAC(ctx, c.site, macAddress)
 	if err == nil && existingUser != nil {
 		// User exists - return existing allocation with Prefix and Gateway.
 		// Need to determine prefix and gateway from pool config.
@@ -857,16 +857,16 @@ func formatIPRange(start, end netip.Addr) string {
 func collectDNSServers(network *unifi.Network) []string {
 	dnsServers := make([]string, 0, 4)
 	if network.DHCPDDNS1 != "" {
-		dnsServers = append(dnsServers, network.DHCPDDNS1)
+		dnsServers = append(dnsServers, *network.DHCPDDNS1)
 	}
 	if network.DHCPDDNS2 != "" {
-		dnsServers = append(dnsServers, network.DHCPDDNS2)
+		dnsServers = append(dnsServers, *network.DHCPDDNS2)
 	}
 	if network.DHCPDDNS3 != "" {
-		dnsServers = append(dnsServers, network.DHCPDDNS3)
+		dnsServers = append(dnsServers, *network.DHCPDDNS3)
 	}
 	if network.DHCPDDNS4 != "" {
-		dnsServers = append(dnsServers, network.DHCPDDNS4)
+		dnsServers = append(dnsServers, *network.DHCPDDNS4)
 	}
 	return dnsServers
 }
