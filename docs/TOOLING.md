@@ -57,10 +57,17 @@ sections:
 #### Import Aliases (importas)
 Enforces consistent import aliasing:
 - `corev1` for k8s.io/api/core/v1
+- `apiextensionsv1` for k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1
 - `metav1` for k8s.io/apimachinery/pkg/apis/meta/v1
-- `clusterv1` for cluster-api/api/v1beta2
-- `ipamv1` for cluster-api/exp/ipam/api/v1beta2
-- `ipamv1alpha1` for project's api/v1alpha1
+- `apierrors` for k8s.io/apimachinery/pkg/api/errors
+- `kerrors` for k8s.io/apimachinery/pkg/util/errors
+- `clusterv1beta2` for cluster-api/api/core/v1beta2
+- `ipamv1beta2` for cluster-api/api/ipam/v1beta2
+- `v1beta2` for project's api/v1beta2
+
+`no-unaliased: true` is set, so an import of one of these packages without its
+alias is a lint error — and because `issues.fix: true` is also set, a bare
+`golangci-lint run` will rewrite the file to add it.
 
 #### License Header (goheader)
 Enforces Apache 2.0 license header on all Go files.

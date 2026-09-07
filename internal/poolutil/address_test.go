@@ -19,16 +19,16 @@ package poolutil
 import (
 	"testing"
 
-	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 func TestGetIPAddress_CIDR(t *testing.T) {
 	tests := []struct {
-		name       string
-		subnet     v1beta2.SubnetSpec
-		index      int
-		wantIP     string
-		wantErr    bool
+		name    string
+		subnet  v1beta2.SubnetSpec
+		index   int
+		wantIP  string
+		wantErr bool
 	}{
 		{
 			name:    "first IP in /24",

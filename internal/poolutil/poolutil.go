@@ -111,7 +111,7 @@ func PoolSpecToIPSet(poolSpec *v1beta2.SubnetSpec) (*netipx.IPSet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse end IP %s: %w", poolSpec.End, err)
 		}
-		
+
 		// Create a range and add to builder
 		ipRange := netipx.IPRangeFrom(startIP, endIP)
 		builder.AddRange(ipRange)

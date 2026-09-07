@@ -107,9 +107,14 @@ To migrate:
    `unifiinstances.ipam.cluster.x-k8s.io` CRDs once nothing references them.
 
 See [config/samples/example.yaml](config/samples/example.yaml) for a complete
-worked scenario. The new CRDs keep `unifiippool`/`unifiinstance` (and their
-plurals) as short names, so existing `kubectl get unifiippool` habits still
-resolve — to the new kinds.
+worked scenario.
+
+The new CRDs keep `unifiippool`/`unifiinstance` (and their plurals) as short
+names, but they only take effect once step 4 is done: while both the old and the
+new CRDs are installed, `kubectl get unifiippool` still resolves to the old
+CRD, whose singular name wins over another CRD's short name. Until then, address
+the new kinds explicitly — `kubectl get ippool`, or
+`kubectl get ippools.unifi.ipam.cluster.x-k8s.io`.
 
 ## Configuration
 

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 // GetIPAddress returns the IP address at the given index within a subnet.
@@ -156,25 +156,25 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 	// instead of iterating through all addresses
 	mask := prefix.Masked().Addr()
 	bits := prefix.Bits()
-	
+
 	if mask.Is4() {
 		// IPv4: Calculate last IP using bit operations
 		maskBytes := mask.As4()
 		hostBits := 32 - bits
-		
+
 		// Create a mask with all host bits set
 		hostMask := uint32((1 << hostBits) - 1)
-		
+
 		// Convert IP to uint32
-		ipUint := uint32(maskBytes[0])<<24 | uint32(maskBytes[1])<<16 | 
+		ipUint := uint32(maskBytes[0])<<24 | uint32(maskBytes[1])<<16 |
 			uint32(maskBytes[2])<<8 | uint32(maskBytes[3])
-		
+
 		// Set all host bits (this gives broadcast address)
 		broadcastUint := ipUint | hostMask
-		
+
 		// Subtract 1 to get last usable IP (skip broadcast)
 		lastUsableUint := broadcastUint - 1
-		
+
 		// Convert back to netip.Addr
 		return netip.AddrFrom4([4]byte{
 			byte(lastUsableUint >> 24),
@@ -183,11 +183,11 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 			byte(lastUsableUint),
 		})
 	}
-	
+
 	// IPv6: Calculate last IP using bit operations
 	maskBytes := mask.As16()
 	hostBits := 128 - bits
-	
+
 	// Convert to two uint64s (high and low 64 bits)
 	high := uint64(maskBytes[0])<<56 | uint64(maskBytes[1])<<48 |
 		uint64(maskBytes[2])<<40 | uint64(maskBytes[3])<<32 |
@@ -197,7 +197,7 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 		uint64(maskBytes[10])<<40 | uint64(maskBytes[11])<<32 |
 		uint64(maskBytes[12])<<24 | uint64(maskBytes[13])<<16 |
 		uint64(maskBytes[14])<<8 | uint64(maskBytes[15])
-	
+
 	// Set all host bits
 	if hostBits <= 64 {
 		// All host bits are in the low part
@@ -209,7 +209,7 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 		high |= (uint64(1) << lowBits) - 1
 		low = 0xFFFFFFFFFFFFFFFF
 	}
-	
+
 	// For IPv6, we return the last IP (no broadcast address to skip)
 	return netip.AddrFrom16([16]byte{
 		byte(high >> 56), byte(high >> 48), byte(high >> 40), byte(high >> 32),

@@ -7,10 +7,11 @@ spec:
   # Unifi controller URL
   host: "https://unifi.example.com:8443"
 
-  # Reference to secret containing credentials
+  # Reference to a Secret in this Instance's own namespace. credentialsRef is a
+  # LocalObjectReference, so it carries only a name -- a namespace here would be
+  # pruned by the API server.
   credentialsRef:
     name: unifi-credentials
-    namespace: default
 
   # Unifi site name (optional, defaults to "default")
   site: default
@@ -25,5 +26,7 @@ metadata:
   namespace: default
 type: Opaque
 stringData:
-  username: admin
-  password: your-password-here
+  # The controller and the validating webhook both require the key "apiKey";
+  # a Secret without it is rejected. Mint the key in the Unifi controller under
+  # Settings -> Admins -> API Key.
+  apiKey: your-unifi-api-key-here

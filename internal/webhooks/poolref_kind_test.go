@@ -33,9 +33,13 @@ import (
 	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
-// legacyPoolKind is the kind this provider served before the metal3-style
-// rename. Nothing may match on it any more.
-const legacyPoolKind = "UnifiIPPool"
+// legacyPoolKind and legacyPoolGroup are what this provider served before the
+// metal3-style rename and the move to its own API group. Nothing may match on
+// either any more.
+const (
+	legacyPoolKind  = "UnifiIPPool"
+	legacyPoolGroup = "ipam.cluster.x-k8s.io"
+)
 
 func poolRefScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -50,7 +54,7 @@ func poolRefScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-func addressForPool(kind string) *ipamv1beta2.IPAddress {
+func addressForPool(kind, apiGroup string) *ipamv1beta2.IPAddress {
 	return &ipamv1beta2.IPAddress{
 		ObjectMeta: metav1.ObjectMeta{Name: "allocated", Namespace: "test-ns"},
 		Spec: ipamv1beta2.IPAddressSpec{
@@ -59,7 +63,7 @@ func addressForPool(kind string) *ipamv1beta2.IPAddress {
 			PoolRef: ipamv1beta2.IPPoolReference{
 				Name:     "test-pool",
 				Kind:     kind,
-				APIGroup: v1beta2.GroupVersion.Group,
+				APIGroup: apiGroup,
 			},
 		},
 	}
@@ -67,20 +71,35 @@ func addressForPool(kind string) *ipamv1beta2.IPAddress {
 
 // TestIPPoolWebhook_ValidateDelete_MatchesServedKind pins the third
 // string-literal cluster: the delete webhook counts allocated addresses by
-// poolRef.kind, so it must see the served kind and ignore the pre-rename one.
+// poolRef kind and group, so it must see the served pair and ignore both an
+// address left over from the old kind and one belonging to Cluster API's group.
 func TestIPPoolWebhook_ValidateDelete_MatchesServedKind(t *testing.T) {
 	for _, tt := range []struct {
-		name        string
-		addressKind string
-		wantErr     bool
+		name         string
+		addressKind  string
+		addressGroup string
+		wantErr      bool
 	}{
-		{name: "served kind blocks deletion", addressKind: v1beta2.IPPoolKind, wantErr: true},
-		{name: "legacy kind does not", addressKind: legacyPoolKind, wantErr: false},
+		{
+			name:        "served kind in the served group blocks deletion",
+			addressKind: v1beta2.IPPoolKind, addressGroup: v1beta2.GroupVersion.Group,
+			wantErr: true,
+		},
+		{
+			name:        "pre-rename kind does not",
+			addressKind: legacyPoolKind, addressGroup: v1beta2.GroupVersion.Group,
+			wantErr: false,
+		},
+		{
+			name:        "served kind in Cluster API's group does not",
+			addressKind: v1beta2.IPPoolKind, addressGroup: legacyPoolGroup,
+			wantErr: false,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := poolRefScheme(t)
 			c := fake.NewClientBuilder().WithScheme(scheme).
-				WithObjects(addressForPool(tt.addressKind)).Build()
+				WithObjects(addressForPool(tt.addressKind, tt.addressGroup)).Build()
 
 			w := &IPPool{Client: c}
 			pool := &v1beta2.IPPool{
@@ -89,16 +108,16 @@ func TestIPPoolWebhook_ValidateDelete_MatchesServedKind(t *testing.T) {
 
 			_, err := w.ValidateDelete(context.Background(), pool)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateDelete() error = %v, want error = %v (addresses of kind %q)",
-					err, tt.wantErr, tt.addressKind)
+				t.Errorf("ValidateDelete() error = %v, want error = %v (addresses of %s/%s)",
+					err, tt.wantErr, tt.addressGroup, tt.addressKind)
 			}
 		})
 	}
 }
 
 // TestNoLegacyKindLiteralsRemain is the belt to the behavioral braces: it fails
-// if any Go source under internal/ or cmd/ resurrects a hard-coded pre-rename
-// kind name. Kind comparisons must go through v1beta2.IPPoolKind /
+// if any Go source in the repository resurrects a hard-coded pre-rename kind
+// name. Kind comparisons must go through v1beta2.IPPoolKind /
 // v1beta2.InstanceKind, which the compiler can then keep honest.
 func TestNoLegacyKindLiteralsRemain(t *testing.T) {
 	root, err := filepath.Abs("../..")
@@ -106,7 +125,7 @@ func TestNoLegacyKindLiteralsRemain(t *testing.T) {
 		t.Fatalf("failed to resolve repository root: %v", err)
 	}
 
-	for _, dir := range []string{"internal", "cmd"} {
+	for _, dir := range []string{"api", "cmd", "internal", "pkg"} {
 		if err := filepath.WalkDir(filepath.Join(root, dir), goSourceChecker(t, root)); err != nil {
 			t.Fatalf("failed to walk %s: %v", dir, err)
 		}

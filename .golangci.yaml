@@ -138,6 +138,7 @@ linters:
       - third_party
       - builtin
       - examples
+      - zz_generated\.deepcopy\.go
 
 formatters:
   enable:
@@ -163,6 +164,7 @@ formatters:
       - third_party
       - builtin
       - examples
+      - zz_generated\.deepcopy\.go
 
 issues:
   max-issues-per-linter: 0

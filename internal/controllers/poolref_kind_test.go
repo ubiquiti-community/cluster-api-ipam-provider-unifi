@@ -73,6 +73,10 @@ func claimReferencingGroup(name, kind, apiGroup string) *ipamv1beta2.IPAddressCl
 }
 
 func addressReferencing(name, kind string) *ipamv1beta2.IPAddress {
+	return addressReferencingGroup(name, kind, v1beta2.GroupVersion.Group)
+}
+
+func addressReferencingGroup(name, kind, apiGroup string) *ipamv1beta2.IPAddress {
 	return &ipamv1beta2.IPAddress{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"},
 		Spec: ipamv1beta2.IPAddressSpec{
@@ -83,7 +87,7 @@ func addressReferencing(name, kind string) *ipamv1beta2.IPAddress {
 			PoolRef: ipamv1beta2.IPPoolReference{
 				Name:     "test-pool",
 				Kind:     kind,
-				APIGroup: v1beta2.GroupVersion.Group,
+				APIGroup: apiGroup,
 			},
 		},
 	}
@@ -117,30 +121,74 @@ func TestProviderAdapter_ipPoolToIPClaims_MatchesServedKind(t *testing.T) {
 }
 
 // TestIPPoolReconciler_ipAddressToIPPool_MatchesServedKind pins the pool
-// controller's IPAddress mapper against the same silent-failure class.
+// controller's IPAddress mapper against the same silent-failure class, on both
+// axes: an address must name the served kind AND the served group to enqueue its
+// pool. IPPool in ipam.cluster.x-k8s.io belongs to somebody else.
 func TestIPPoolReconciler_ipAddressToIPPool_MatchesServedKind(t *testing.T) {
 	r := &IPPoolReconciler{}
 
-	if got := r.ipAddressToIPPool(context.Background(), addressReferencing("current", v1beta2.IPPoolKind)); len(got) != 1 {
-		t.Errorf("expected an address with kind %q to enqueue its pool, got %v", v1beta2.IPPoolKind, got)
-	}
-	if got := r.ipAddressToIPPool(context.Background(), addressReferencing("legacy", legacyPoolKind)); len(got) != 0 {
-		t.Errorf("expected an address with kind %q to be ignored, got %v", legacyPoolKind, got)
+	for _, tt := range []struct {
+		name     string
+		address  *ipamv1beta2.IPAddress
+		wantReqs int
+	}{
+		{
+			name:     "served kind in the served group enqueues the pool",
+			address:  addressReferencing("current", v1beta2.IPPoolKind),
+			wantReqs: 1,
+		},
+		{
+			name:     "pre-rename kind is ignored",
+			address:  addressReferencing("legacy-kind", legacyPoolKind),
+			wantReqs: 0,
+		},
+		{
+			name:     "served kind in Cluster API's group is ignored",
+			address:  addressReferencingGroup("legacy-group", v1beta2.IPPoolKind, legacyPoolGroup),
+			wantReqs: 0,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := r.ipAddressToIPPool(context.Background(), tt.address)
+			if len(got) != tt.wantReqs {
+				t.Errorf("got %d reconcile requests, want %d (poolRef %s/%s): %v",
+					len(got), tt.wantReqs,
+					tt.address.Spec.PoolRef.APIGroup, tt.address.Spec.PoolRef.Kind, got)
+			}
+		})
 	}
 }
 
 // TestIPPoolReconciler_handleDeletion_CountsServedKind pins the
 // deletion-protection path: the finalizer is only released once no IPAddress
-// referencing the served kind remains.
+// naming the served kind in the served group remains. An address left over from
+// the old group or the old kind must not keep the pool alive.
 func TestIPPoolReconciler_handleDeletion_CountsServedKind(t *testing.T) {
 	for _, tt := range []struct {
 		name            string
 		addressKind     string
+		addressGroup    string
 		wantRequeue     bool
 		wantFinalizerOn bool
 	}{
-		{name: "served kind holds the pool", addressKind: v1beta2.IPPoolKind, wantRequeue: true, wantFinalizerOn: true},
-		{name: "legacy kind does not", addressKind: legacyPoolKind, wantRequeue: false, wantFinalizerOn: false},
+		{
+			name:         "served kind in the served group holds the pool",
+			addressKind:  v1beta2.IPPoolKind,
+			addressGroup: v1beta2.GroupVersion.Group,
+			wantRequeue:  true, wantFinalizerOn: true,
+		},
+		{
+			name:         "pre-rename kind does not",
+			addressKind:  legacyPoolKind,
+			addressGroup: v1beta2.GroupVersion.Group,
+			wantRequeue:  false, wantFinalizerOn: false,
+		},
+		{
+			name:         "served kind in Cluster API's group does not",
+			addressKind:  v1beta2.IPPoolKind,
+			addressGroup: legacyPoolGroup,
+			wantRequeue:  false, wantFinalizerOn: false,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := kindTestScheme(t)
@@ -154,7 +202,7 @@ func TestIPPoolReconciler_handleDeletion_CountsServedKind(t *testing.T) {
 				},
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).
-				WithObjects(pool, addressReferencing("addr", tt.addressKind)).Build()
+				WithObjects(pool, addressReferencingGroup("addr", tt.addressKind, tt.addressGroup)).Build()
 
 			r := &IPPoolReconciler{Client: c, Scheme: scheme}
 			res, err := r.handleDeletion(context.Background(), pool, logr.Discard())
@@ -162,10 +210,12 @@ func TestIPPoolReconciler_handleDeletion_CountsServedKind(t *testing.T) {
 				t.Fatalf("handleDeletion returned an error: %v", err)
 			}
 			if got := res.RequeueAfter > 0; got != tt.wantRequeue {
-				t.Errorf("requeued = %v, want %v (addresses of kind %q)", got, tt.wantRequeue, tt.addressKind)
+				t.Errorf("requeued = %v, want %v (addresses of %s/%s)",
+					got, tt.wantRequeue, tt.addressGroup, tt.addressKind)
 			}
 			if got := len(pool.Finalizers) > 0; got != tt.wantFinalizerOn {
-				t.Errorf("finalizer retained = %v, want %v (addresses of kind %q)", got, tt.wantFinalizerOn, tt.addressKind)
+				t.Errorf("finalizer retained = %v, want %v (addresses of %s/%s)",
+					got, tt.wantFinalizerOn, tt.addressGroup, tt.addressKind)
 			}
 		})
 	}
