@@ -41,8 +41,6 @@ import (
 	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
-const unifiIPPoolKind = "UnifiIPPool"
-
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddressclaims,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddressclaims/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddressclaims/finalizers,verbs=update
@@ -61,7 +59,7 @@ var _ ipamutil.ProviderAdapter = &UnifiProviderAdapter{}
 type UnifiClaimHandler struct {
 	client.Client
 	claim *ipamv1beta2.IPAddressClaim
-	pool  *v1beta2.UnifiIPPool
+	pool  *v1beta2.IPPool
 }
 
 var _ ipamutil.ClaimHandler = &UnifiClaimHandler{}
@@ -76,8 +74,8 @@ func (a *UnifiProviderAdapter) SetupWithManager(_ context.Context, b *ctrl.Build
 			MaxConcurrentReconciles: 1,
 		}).
 		Watches(
-			&v1beta2.UnifiIPPool{},
-			handler.EnqueueRequestsFromMapFunc(a.unifiIPPoolToIPClaims),
+			&v1beta2.IPPool{},
+			handler.EnqueueRequestsFromMapFunc(a.ipPoolToIPClaims),
 			builder.WithPredicates(
 				predicates.ResourceTransitionedToUnpaused(),
 				predicates.PoolNoLongerEmpty(),
@@ -92,9 +90,9 @@ func (a *UnifiProviderAdapter) ToAdapter() ipamutil.ProviderAdapter {
 	return a
 }
 
-// unifiIPPoolToIPClaims maps UnifiIPPool events to IPAddressClaim reconcile requests.
-func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj client.Object) []reconcile.Request {
-	pool, ok := obj.(*v1beta2.UnifiIPPool)
+// ipPoolToIPClaims maps IPPool events to IPAddressClaim reconcile requests.
+func (a *UnifiProviderAdapter) ipPoolToIPClaims(ctx context.Context, obj client.Object) []reconcile.Request {
+	pool, ok := obj.(*v1beta2.IPPool)
 	if !ok {
 		return nil
 	}
@@ -108,7 +106,7 @@ func (a *UnifiProviderAdapter) unifiIPPoolToIPClaims(ctx context.Context, obj cl
 	requests := make([]reconcile.Request, 0)
 	for _, claim := range claimList.Items {
 		if claim.Spec.PoolRef.Name == pool.Name &&
-			claim.Spec.PoolRef.Kind == unifiIPPoolKind &&
+			claim.Spec.PoolRef.Kind == v1beta2.IPPoolKind &&
 			claim.Spec.PoolRef.APIGroup == v1beta2.GroupVersion.Group {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -130,11 +128,11 @@ func (a *UnifiProviderAdapter) ClaimHandlerFor(_ client.Client, claim *ipamv1bet
 	}
 }
 
-// FetchPool fetches the UnifiIPPool referenced by the claim.
+// FetchPool fetches the IPPool referenced by the claim.
 func (h *UnifiClaimHandler) FetchPool(ctx context.Context) (client.Object, *ctrl.Result, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
-	pool := &v1beta2.UnifiIPPool{}
+	pool := &v1beta2.IPPool{}
 	poolKey := types.NamespacedName{
 		Name:      h.claim.Spec.PoolRef.Name,
 		Namespace: h.claim.Namespace,
@@ -157,7 +155,7 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1be
 	logger := ctrl.LoggerFrom(ctx)
 
 	addressesInUse, err := poolutil.ListAddressesInUse(ctx, h.Client, h.pool.Namespace,
-		h.pool.Name, unifiIPPoolKind, v1beta2.GroupVersion.Group)
+		h.pool.Name, v1beta2.IPPoolKind, v1beta2.GroupVersion.Group)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses in use: %w", err)
 	}
@@ -184,7 +182,7 @@ func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta2.IPAddress, a
 }
 
 func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.ApiClient, *v1beta2.SubnetSpec, error) {
-	instance, err := h.getUnifiInstance(ctx)
+	instance, err := h.getInstance(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -220,8 +218,8 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.ApiClie
 	return unifiClient, &h.pool.Spec.Subnets[0], nil
 }
 
-func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*v1beta2.UnifiInstance, error) {
-	instance := &v1beta2.UnifiInstance{}
+func (h *UnifiClaimHandler) getInstance(ctx context.Context) (*v1beta2.Instance, error) {
+	instance := &v1beta2.Instance{}
 	instanceKey := types.NamespacedName{
 		Name:      h.pool.Spec.InstanceRef.Name,
 		Namespace: h.pool.Spec.InstanceRef.Namespace,
@@ -231,13 +229,13 @@ func (h *UnifiClaimHandler) getUnifiInstance(ctx context.Context) (*v1beta2.Unif
 	}
 
 	if err := h.Get(ctx, instanceKey, instance); err != nil {
-		return nil, fmt.Errorf("failed to fetch UnifiInstance: %w", err)
+		return nil, fmt.Errorf("failed to fetch Instance: %w", err)
 	}
 
 	return instance, nil
 }
 
-func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *v1beta2.UnifiInstance) (*corev1.Secret, error) {
+func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *v1beta2.Instance) (*corev1.Secret, error) {
 	var secret corev1.Secret
 	if err := h.Get(ctx, types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,

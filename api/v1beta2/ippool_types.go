@@ -21,9 +21,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// UnifiIPPoolSpec defines the desired state of UnifiIPPool.
-type UnifiIPPoolSpec struct {
-	// InstanceRef is a reference to the UnifiInstance to use
+const (
+	// IPPoolKind is the kind name of the IPPool resource. IPAddressClaim and
+	// IPAddress reference their pool by this string, so it is the single source
+	// for every poolRef.kind comparison.
+	IPPoolKind = "IPPool"
+)
+
+// IPPoolSpec defines the desired state of IPPool.
+type IPPoolSpec struct {
+	// InstanceRef is a reference to the Instance to use
 	// +kubebuilder:validation:Required
 	InstanceRef corev1.ObjectReference `json:"instanceRef"`
 
@@ -105,8 +112,8 @@ type SubnetSpec struct {
 	DNSServers []string `json:"dnsServers,omitempty"`
 }
 
-// UnifiIPPoolStatus defines the observed state of UnifiIPPool.
-type UnifiIPPoolStatus struct {
+// IPPoolStatus defines the observed state of IPPool.
+type IPPoolStatus struct {
 	// Allocations tracks current IP assignments (claim name → IP address)
 	// Automatically populated by watching IPAddress resources
 	// Can be copied to Spec.PreAllocations before cluster upgrades for IP reuse
@@ -134,7 +141,7 @@ type UnifiIPPoolStatus struct {
 	// +optional
 	AllocationDetails *AllocationDetails `json:"allocationDetails,omitempty"`
 
-	// Conditions defines current state of the UnifiIPPool using metav1.Conditions
+	// Conditions defines current state of the IPPool using metav1.Conditions
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
@@ -272,10 +279,11 @@ type AllocatedIP struct {
 	AllocatedAt *metav1.Time `json:"allocatedAt,omitempty"`
 }
 
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:path=unifiippools,scope=Namespaced,categories=cluster-api
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:resource:path=ippools,scope=Namespaced,categories=cluster-api,shortName=ipp;ippool;uipp;uippool;uippools;unifiipp;unifiippool;unifiippools
 // +kubebuilder:storageversion
+// +kubebuilder:subresource:status
+// +kubebuilder:object:root=true
 // +kubebuilder:printcolumn:name="Network",type="string",JSONPath=".status.networkInfo.name",description="Unifi network name"
 // +kubebuilder:printcolumn:name="CIDR",type="string",JSONPath=".spec.subnets[0].cidr",description="Network CIDR"
 // +kubebuilder:printcolumn:name="Used",type="integer",JSONPath=".status.addresses.used",description="Allocated IPs"
@@ -283,25 +291,24 @@ type AllocatedIP struct {
 // +kubebuilder:printcolumn:name="Utilization",type="string",JSONPath=".status.capacity.utilizationPercent",description="Pool utilization %"
 // +kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.conditions[?(@.type=='NetworkSynced')].status",description="Network sync status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time since creation"
-
-// UnifiIPPool is the Schema for the unifiippools API.
-type UnifiIPPool struct {
+// IPPool is the Schema for the ippools API.
+type IPPool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   UnifiIPPoolSpec   `json:"spec"`
-	Status UnifiIPPoolStatus `json:"status,omitempty"`
+	Spec   IPPoolSpec   `json:"spec"`
+	Status IPPoolStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// UnifiIPPoolList contains a list of UnifiIPPool.
-type UnifiIPPoolList struct {
+// IPPoolList contains a list of IPPool.
+type IPPoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []UnifiIPPool `json:"items"`
+	Items           []IPPool `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&UnifiIPPool{}, &UnifiIPPoolList{})
+	objectTypes = append(objectTypes, &IPPool{}, &IPPoolList{})
 }

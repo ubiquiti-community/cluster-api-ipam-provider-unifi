@@ -1,0 +1,161 @@
+/*
+Copyright 2024.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controllers
+
+import (
+	"context"
+	"testing"
+
+	"github.com/go-logr/logr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
+
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
+)
+
+// The pool kind is compared as a plain string in three places that the compiler
+// cannot check for us: the claim mapper, the pool controller's IPAddress mapper,
+// and every ListAddressesInUse call. A rename that misses one of them keeps
+// compiling and silently stops matching, so these tests pin the served kind name
+// behaviourally: the new kind is honored, the old one is not.
+
+const legacyPoolKind = "UnifiIPPool"
+
+func kindTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	if err := v1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add v1beta2 to scheme: %v", err)
+	}
+	if err := ipamv1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add cluster-api ipam v1beta2 to scheme: %v", err)
+	}
+	return scheme
+}
+
+func claimReferencing(name, kind string) *ipamv1beta2.IPAddressClaim {
+	return &ipamv1beta2.IPAddressClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"},
+		Spec: ipamv1beta2.IPAddressClaimSpec{
+			PoolRef: ipamv1beta2.IPPoolReference{
+				Name:     "test-pool",
+				Kind:     kind,
+				APIGroup: v1beta2.GroupVersion.Group,
+			},
+		},
+	}
+}
+
+func addressReferencing(name, kind string) *ipamv1beta2.IPAddress {
+	return &ipamv1beta2.IPAddress{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"},
+		Spec: ipamv1beta2.IPAddressSpec{
+			Address: "192.168.1.10",
+			ClaimRef: ipamv1beta2.IPAddressClaimReference{
+				Name: name,
+			},
+			PoolRef: ipamv1beta2.IPPoolReference{
+				Name:     "test-pool",
+				Kind:     kind,
+				APIGroup: v1beta2.GroupVersion.Group,
+			},
+		},
+	}
+}
+
+// TestProviderAdapter_ipPoolToIPClaims_MatchesServedKind pins the claim-mapping
+// path: a claim whose poolRef.kind is the served kind is enqueued, and one
+// carrying the pre-rename kind is not.
+func TestProviderAdapter_ipPoolToIPClaims_MatchesServedKind(t *testing.T) {
+	scheme := kindTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		claimReferencing("current-claim", v1beta2.IPPoolKind),
+		claimReferencing("legacy-claim", legacyPoolKind),
+	).Build()
+
+	adapter := &UnifiProviderAdapter{Client: c}
+	pool := &v1beta2.IPPool{ObjectMeta: metav1.ObjectMeta{Name: "test-pool", Namespace: "test-ns"}}
+
+	got := adapter.ipPoolToIPClaims(context.Background(), pool)
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one reconcile request, got %d: %v", len(got), got)
+	}
+	if got[0].Name != "current-claim" {
+		t.Errorf("expected the claim with kind %q to be enqueued, got %q",
+			v1beta2.IPPoolKind, got[0].Name)
+	}
+}
+
+// TestIPPoolReconciler_ipAddressToIPPool_MatchesServedKind pins the pool
+// controller's IPAddress mapper against the same silent-failure class.
+func TestIPPoolReconciler_ipAddressToIPPool_MatchesServedKind(t *testing.T) {
+	r := &IPPoolReconciler{}
+
+	if got := r.ipAddressToIPPool(context.Background(), addressReferencing("current", v1beta2.IPPoolKind)); len(got) != 1 {
+		t.Errorf("expected an address with kind %q to enqueue its pool, got %v", v1beta2.IPPoolKind, got)
+	}
+	if got := r.ipAddressToIPPool(context.Background(), addressReferencing("legacy", legacyPoolKind)); len(got) != 0 {
+		t.Errorf("expected an address with kind %q to be ignored, got %v", legacyPoolKind, got)
+	}
+}
+
+// TestIPPoolReconciler_handleDeletion_CountsServedKind pins the
+// deletion-protection path: the finalizer is only released once no IPAddress
+// referencing the served kind remains.
+func TestIPPoolReconciler_handleDeletion_CountsServedKind(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		addressKind     string
+		wantRequeue     bool
+		wantFinalizerOn bool
+	}{
+		{name: "served kind holds the pool", addressKind: v1beta2.IPPoolKind, wantRequeue: true, wantFinalizerOn: true},
+		{name: "legacy kind does not", addressKind: legacyPoolKind, wantRequeue: false, wantFinalizerOn: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := kindTestScheme(t)
+			now := metav1.Now()
+			pool := &v1beta2.IPPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-pool",
+					Namespace:         "test-ns",
+					DeletionTimestamp: &now,
+					Finalizers:        []string{ProtectPoolFinalizer},
+				},
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(pool, addressReferencing("addr", tt.addressKind)).Build()
+
+			r := &IPPoolReconciler{Client: c, Scheme: scheme}
+			res, err := r.handleDeletion(context.Background(), pool, logr.Discard())
+			if err != nil {
+				t.Fatalf("handleDeletion returned an error: %v", err)
+			}
+			if got := res.RequeueAfter > 0; got != tt.wantRequeue {
+				t.Errorf("requeued = %v, want %v (addresses of kind %q)", got, tt.wantRequeue, tt.addressKind)
+			}
+			if got := len(pool.Finalizers) > 0; got != tt.wantFinalizerOn {
+				t.Errorf("finalizer retained = %v, want %v (addresses of kind %q)", got, tt.wantFinalizerOn, tt.addressKind)
+			}
+		})
+	}
+}

@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TestUnifiInstanceReconciler_Reconcile(t *testing.T) {
+func TestInstanceReconciler_Reconcile(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		Scheme *runtime.Scheme
@@ -45,23 +45,23 @@ func TestUnifiInstanceReconciler_Reconcile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &UnifiInstanceReconciler{
+			r := &InstanceReconciler{
 				Client: tt.fields.Client,
 				Scheme: tt.fields.Scheme,
 			}
 			got, err := r.Reconcile(context.Background(), tt.args.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceReconciler.Reconcile() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("InstanceReconciler.Reconcile() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiInstanceReconciler.Reconcile() = %v, want %v", got, tt.want)
+				t.Errorf("InstanceReconciler.Reconcile() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceReconciler_SetupWithManager(t *testing.T) {
+func TestInstanceReconciler_SetupWithManager(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		Scheme *runtime.Scheme
@@ -79,12 +79,12 @@ func TestUnifiInstanceReconciler_SetupWithManager(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &UnifiInstanceReconciler{
+			r := &InstanceReconciler{
 				Client: tt.fields.Client,
 				Scheme: tt.fields.Scheme,
 			}
 			if err := r.SetupWithManager(tt.args.mgr); (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceReconciler.SetupWithManager() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("InstanceReconciler.SetupWithManager() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

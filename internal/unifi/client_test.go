@@ -127,7 +127,7 @@ func TestApiClient_GetOrAllocateIP(t *testing.T) {
 		site   string
 	}
 	type args struct {
-		pool           *v1beta2.UnifiIPPool
+		pool           *v1beta2.IPPool
 		claim          *ipamv1beta2.IPAddressClaim
 		networkID      string
 		macAddress     string
@@ -169,7 +169,7 @@ func TestApiClient_allocateNextIP(t *testing.T) {
 	}
 	type args struct {
 		ctx            context.Context
-		pool           *v1beta2.UnifiIPPool
+		pool           *v1beta2.IPPool
 		claim          *ipamv1beta2.IPAddressClaim
 		network        *unifi.Network
 		addressesInUse []ipamv1beta2.IPAddress
@@ -431,9 +431,9 @@ func writeUnifiData[T any](t *testing.T, w http.ResponseWriter, data []T) {
 	}
 }
 
-func testPool() *v1beta2.UnifiIPPool {
-	return &v1beta2.UnifiIPPool{
-		Spec: v1beta2.UnifiIPPoolSpec{
+func testPool() *v1beta2.IPPool {
+	return &v1beta2.IPPool{
+		Spec: v1beta2.IPPoolSpec{
 			Subnets: []v1beta2.SubnetSpec{{CIDR: "192.168.1.0/24"}},
 			Gateway: "192.168.1.1",
 		},

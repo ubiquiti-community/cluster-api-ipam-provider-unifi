@@ -1,8 +1,8 @@
 ---
-# Example UnifiIPPool with IP reuse capability
+# Example IPPool with IP reuse capability
 # This demonstrates the IP reuse feature for stable IP assignments across machine recreation
 apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+kind: IPPool
 metadata:
   name: cluster-pool-with-reuse
   namespace: default
@@ -35,7 +35,7 @@ spec:
     cluster-worker-ingress-0: "10.1.40.20"
     cluster-worker-ingress-1: "10.1.40.21"
 
-  # Reference to UnifiInstance for API access
+  # Reference to Instance for API access
   instanceRef:
     name: unifi-controller
     namespace: default
@@ -44,9 +44,9 @@ spec:
   # networkID: "507f1f77bcf86cd799439011"
 
 ---
-# Example UnifiIPPool using IP range notation instead of CIDR
+# Example IPPool using IP range notation instead of CIDR
 apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+kind: IPPool
 metadata:
   name: cluster-pool-range
   namespace: default
@@ -77,8 +77,8 @@ spec:
 # - Status.Allocations tracks current assignments
 #
 # STEP 2: Before upgrade, preserve IPs:
-#   ALLOCS=$(kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}')
-#   kubectl patch unifiippool cluster-pool --type=merge -p "{\"spec\":{\"preAllocations\":$ALLOCS}}"
+#   ALLOCS=$(kubectl get ippool cluster-pool -o jsonpath='{.status.allocations}')
+#   kubectl patch ippool cluster-pool --type=merge -p "{\"spec\":{\"preAllocations\":$ALLOCS}}"
 #
 # STEP 3: Perform rolling upgrade
 # - Machines are deleted and recreated
@@ -86,5 +86,5 @@ spec:
 # - Provider checks PreAllocations first → same IPs assigned
 #
 # STEP 4: Verify IP reuse:
-#   kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}'
+#   kubectl get ippool cluster-pool -o jsonpath='{.status.allocations}'
 #   # Should match spec.preAllocations

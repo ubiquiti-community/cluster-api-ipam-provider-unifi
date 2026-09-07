@@ -28,7 +28,7 @@ import (
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
-func TestUnifiInstanceWebhook_SetupWebhookWithManager(t *testing.T) {
+func TestInstanceWebhook_SetupWebhookWithManager(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
@@ -45,22 +45,22 @@ func TestUnifiInstanceWebhook_SetupWebhookWithManager(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			if err := w.SetupWebhookWithManager(tt.args.mgr); (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.SetupWebhookWithManager() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.SetupWebhookWithManager() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceWebhook_Default(t *testing.T) {
+func TestInstanceWebhook_Default(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
 	type args struct {
-		obj *v1beta2.UnifiInstance
+		obj *v1beta2.Instance
 	}
 	tests := []struct {
 		name    string
@@ -72,22 +72,22 @@ func TestUnifiInstanceWebhook_Default(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			if err := w.Default(context.Background(), tt.args.obj); (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.Default() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.Default() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceWebhook_ValidateCreate(t *testing.T) {
+func TestInstanceWebhook_ValidateCreate(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
 	type args struct {
-		obj *v1beta2.UnifiInstance
+		obj *v1beta2.Instance
 	}
 	tests := []struct {
 		name    string
@@ -100,28 +100,28 @@ func TestUnifiInstanceWebhook_ValidateCreate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			got, err := w.ValidateCreate(context.Background(), tt.args.obj)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.ValidateCreate() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.ValidateCreate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiInstanceWebhook.ValidateCreate() = %v, want %v", got, tt.want)
+				t.Errorf("Instance.ValidateCreate() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceWebhook_ValidateUpdate(t *testing.T) {
+func TestInstanceWebhook_ValidateUpdate(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
 	type args struct {
-		oldObj *v1beta2.UnifiInstance
-		newObj *v1beta2.UnifiInstance
+		oldObj *v1beta2.Instance
+		newObj *v1beta2.Instance
 	}
 	tests := []struct {
 		name    string
@@ -134,27 +134,27 @@ func TestUnifiInstanceWebhook_ValidateUpdate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			got, err := w.ValidateUpdate(context.Background(), tt.args.oldObj, tt.args.newObj)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiInstanceWebhook.ValidateUpdate() = %v, want %v", got, tt.want)
+				t.Errorf("Instance.ValidateUpdate() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceWebhook_ValidateDelete(t *testing.T) {
+func TestInstanceWebhook_ValidateDelete(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
 	type args struct {
-		obj *v1beta2.UnifiInstance
+		obj *v1beta2.Instance
 	}
 	tests := []struct {
 		name    string
@@ -167,27 +167,27 @@ func TestUnifiInstanceWebhook_ValidateDelete(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			got, err := w.ValidateDelete(context.Background(), tt.args.obj)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.ValidateDelete() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.ValidateDelete() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiInstanceWebhook.ValidateDelete() = %v, want %v", got, tt.want)
+				t.Errorf("Instance.ValidateDelete() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiInstanceWebhook_validate(t *testing.T) {
+func TestInstanceWebhook_validate(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
 	type args struct {
-		instance *v1beta2.UnifiInstance
+		instance *v1beta2.Instance
 	}
 	tests := []struct {
 		name    string
@@ -199,11 +199,11 @@ func TestUnifiInstanceWebhook_validate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &UnifiInstanceWebhook{
+			w := &Instance{
 				Client: tt.fields.Client,
 			}
 			if err := w.validate(context.Background(), tt.args.instance); (err != nil) != tt.wantErr {
-				t.Errorf("UnifiInstanceWebhook.validate() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Instance.validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

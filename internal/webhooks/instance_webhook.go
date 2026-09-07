@@ -30,28 +30,28 @@ import (
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
-// UnifiInstanceWebhook implements validating and defaulting webhooks for UnifiInstance.
-type UnifiInstanceWebhook struct {
+// Instance implements validating and defaulting webhooks for Instance.
+type Instance struct {
 	Client client.Client
 }
 
 // SetupWebhookWithManager registers the webhook with the controller manager.
-func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
+func (w *Instance) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
 	// Instantiated at the concrete type: the generic handlers build the object
 	// they decode into with reflect.New on T, so T must be a pointer type. An
 	// interface T (runtime.Object) registers fine and then panics on every
 	// request.
-	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.UnifiInstance{}).
+	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.Instance{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance,mutating=true,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiinstances,verbs=create;update,versions=v1alpha1,name=munifiinstance.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=true,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=default.instance.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // Default implements admission.Defaulter.
-func (w *UnifiInstanceWebhook) Default(_ context.Context, instance *v1beta2.UnifiInstance) error {
+func (w *Instance) Default(_ context.Context, instance *v1beta2.Instance) error {
 	// Set default site if not specified.
 	if instance.Spec.Site == nil || *instance.Spec.Site == "" {
 		defaultSite := "default"
@@ -61,29 +61,29 @@ func (w *UnifiInstanceWebhook) Default(_ context.Context, instance *v1beta2.Unif
 	return nil
 }
 
-// +kubebuilder:webhook:path=/validate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance,mutating=false,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiinstances,verbs=create;update;delete,versions=v1alpha1,name=vunifiinstance.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=false,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=validation.instance.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // ValidateCreate implements admission.Validator.
-func (w *UnifiInstanceWebhook) ValidateCreate(ctx context.Context, instance *v1beta2.UnifiInstance) (admission.Warnings, error) {
+func (w *Instance) ValidateCreate(ctx context.Context, instance *v1beta2.Instance) (admission.Warnings, error) {
 	return nil, w.validate(ctx, instance)
 }
 
 // ValidateUpdate implements admission.Validator.
-func (w *UnifiInstanceWebhook) ValidateUpdate(ctx context.Context, _, newInstance *v1beta2.UnifiInstance) (admission.Warnings, error) {
+func (w *Instance) ValidateUpdate(ctx context.Context, _, newInstance *v1beta2.Instance) (admission.Warnings, error) {
 	return nil, w.validate(ctx, newInstance)
 }
 
 // ValidateDelete implements admission.Validator.
-func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, instance *v1beta2.UnifiInstance) (admission.Warnings, error) {
+func (w *Instance) ValidateDelete(ctx context.Context, instance *v1beta2.Instance) (admission.Warnings, error) {
 	// Allow deletion if skip annotation is set.
 	if _, ok := instance.Annotations[skipValidateDeleteWebhookAnnotation]; ok {
 		return nil, nil
 	}
 
-	// Check if there are UnifiIPPools referencing this instance.
-	poolList := &v1beta2.UnifiIPPoolList{}
+	// Check if there are IPPools referencing this instance.
+	poolList := &v1beta2.IPPoolList{}
 	if err := w.Client.List(ctx, poolList, client.InNamespace(instance.Namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list UnifiIPPools: %w", err)
+		return nil, fmt.Errorf("failed to list IPPools: %w", err)
 	}
 
 	referencingPools := []string{}
@@ -101,7 +101,7 @@ func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, instance *v1b
 	if len(referencingPools) > 0 {
 		return nil, field.Forbidden(
 			field.NewPath("metadata"),
-			fmt.Sprintf("cannot delete UnifiInstance: %d UnifiIPPool(s) reference this instance: %v. Delete pools first or add annotation %s=true to bypass this check", len(referencingPools), referencingPools, skipValidateDeleteWebhookAnnotation),
+			fmt.Sprintf("cannot delete Instance: %d IPPool(s) reference this instance: %v. Delete pools first or add annotation %s=true to bypass this check", len(referencingPools), referencingPools, skipValidateDeleteWebhookAnnotation),
 		)
 	}
 
@@ -109,7 +109,7 @@ func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, instance *v1b
 }
 
 // validate performs common validation for create and update.
-func (w *UnifiInstanceWebhook) validate(ctx context.Context, instance *v1beta2.UnifiInstance) error {
+func (w *Instance) validate(ctx context.Context, instance *v1beta2.Instance) error {
 	var allErrs field.ErrorList
 
 	allErrs = append(allErrs, validateHost(instance.Spec.Host)...)
@@ -160,7 +160,7 @@ func validateHost(host string) field.ErrorList {
 	return allErrs
 }
 
-func (w *UnifiInstanceWebhook) validateCredentialsRef(ctx context.Context, instance *v1beta2.UnifiInstance) field.ErrorList {
+func (w *Instance) validateCredentialsRef(ctx context.Context, instance *v1beta2.Instance) field.ErrorList {
 	var allErrs field.ErrorList
 
 	if instance.Spec.CredentialsRef.Name == "" {

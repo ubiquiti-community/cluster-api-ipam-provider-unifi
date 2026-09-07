@@ -23,8 +23,12 @@ rules:
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
-  - ipaddressclaims
+  - instances
+  - ipaddresses
+  - ippools
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
@@ -33,18 +37,18 @@ rules:
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
+  - instances/finalizers
   - ipaddressclaims/finalizers
   - ipaddresses/finalizers
-  - unifiinstances/finalizers
-  - unifiippools/finalizers
+  - ippools/finalizers
   verbs:
   - update
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
+  - instances/status
   - ipaddressclaims/status
-  - unifiinstances/status
-  - unifiippools/status
+  - ippools/status
   verbs:
   - get
   - patch
@@ -52,12 +56,8 @@ rules:
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
-  - ipaddresses
-  - unifiinstances
-  - unifiippools
+  - ipaddressclaims
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch

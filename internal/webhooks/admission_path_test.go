@@ -80,10 +80,10 @@ func patchedPaths(resp admission.Response) []string {
 	return paths
 }
 
-func validUnifiInstance() *v1beta2.UnifiInstance {
-	return &v1beta2.UnifiInstance{
+func validInstance() *v1beta2.Instance {
+	return &v1beta2.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-instance", Namespace: "test-ns"},
-		Spec: v1beta2.UnifiInstanceSpec{
+		Spec: v1beta2.InstanceSpec{
 			Host:           "https://unifi.example.com",
 			CredentialsRef: corev1.LocalObjectReference{Name: "unifi-creds"},
 		},
@@ -97,10 +97,10 @@ func credentialsSecret() *corev1.Secret {
 	}
 }
 
-func TestUnifiInstanceWebhook_DefaultingAdmissionRequest(t *testing.T) {
-	wh := admission.WithDefaulter(testScheme(t), &UnifiInstanceWebhook{})
+func TestInstanceWebhook_DefaultingAdmissionRequest(t *testing.T) {
+	wh := admission.WithDefaulter(testScheme(t), &Instance{})
 
-	resp := wh.Handle(context.Background(), createRequest(t, validUnifiInstance()))
+	resp := wh.Handle(context.Background(), createRequest(t, validInstance()))
 
 	if !resp.Allowed {
 		t.Fatalf("defaulting webhook rejected a valid create: code=%d result=%+v",
@@ -121,12 +121,12 @@ func TestUnifiInstanceWebhook_DefaultingAdmissionRequest(t *testing.T) {
 	}
 }
 
-func TestUnifiInstanceWebhook_ValidatingAdmissionRequest(t *testing.T) {
+func TestInstanceWebhook_ValidatingAdmissionRequest(t *testing.T) {
 	scheme := testScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(credentialsSecret()).Build()
-	wh := admission.WithValidator(scheme, &UnifiInstanceWebhook{Client: c})
+	wh := admission.WithValidator(scheme, &Instance{Client: c})
 
-	resp := wh.Handle(context.Background(), createRequest(t, validUnifiInstance()))
+	resp := wh.Handle(context.Background(), createRequest(t, validInstance()))
 
 	if !resp.Allowed {
 		t.Fatalf("validating webhook rejected a valid create: code=%d result=%+v",
@@ -134,14 +134,14 @@ func TestUnifiInstanceWebhook_ValidatingAdmissionRequest(t *testing.T) {
 	}
 }
 
-// TestUnifiInstanceWebhook_ValidatingAdmissionRequestDenies proves the handler
+// TestInstanceWebhook_ValidatingAdmissionRequestDenies proves the handler
 // reaches the validation logic rather than merely surviving the call.
-func TestUnifiInstanceWebhook_ValidatingAdmissionRequestDenies(t *testing.T) {
+func TestInstanceWebhook_ValidatingAdmissionRequestDenies(t *testing.T) {
 	scheme := testScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	wh := admission.WithValidator(scheme, &UnifiInstanceWebhook{Client: c})
+	wh := admission.WithValidator(scheme, &Instance{Client: c})
 
-	instance := validUnifiInstance()
+	instance := validInstance()
 	instance.Spec.Host = "ftp://unifi.example.com" // scheme must be http or https
 
 	resp := wh.Handle(context.Background(), createRequest(t, instance))
@@ -155,20 +155,20 @@ func TestUnifiInstanceWebhook_ValidatingAdmissionRequestDenies(t *testing.T) {
 	}
 }
 
-func validUnifiIPPool() *v1beta2.UnifiIPPool {
-	return &v1beta2.UnifiIPPool{
+func validIPPool() *v1beta2.IPPool {
+	return &v1beta2.IPPool{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pool", Namespace: "test-ns"},
-		Spec: v1beta2.UnifiIPPoolSpec{
+		Spec: v1beta2.IPPoolSpec{
 			InstanceRef: corev1.ObjectReference{Name: "test-instance", Namespace: "test-ns"},
 			Subnets:     []v1beta2.SubnetSpec{{CIDR: "192.168.1.0/24"}},
 		},
 	}
 }
 
-func TestUnifiIPPoolWebhook_DefaultingAdmissionRequest(t *testing.T) {
-	wh := admission.WithDefaulter(testScheme(t), &UnifiIPPoolWebhook{})
+func TestIPPoolWebhook_DefaultingAdmissionRequest(t *testing.T) {
+	wh := admission.WithDefaulter(testScheme(t), &IPPool{})
 
-	pool := validUnifiIPPool()
+	pool := validIPPool()
 	pool.Spec.InstanceRef.Namespace = "" // the defaulter fills this from metadata.namespace
 
 	resp := wh.Handle(context.Background(), createRequest(t, pool))
@@ -188,12 +188,12 @@ func TestUnifiIPPoolWebhook_DefaultingAdmissionRequest(t *testing.T) {
 	}
 }
 
-func TestUnifiIPPoolWebhook_ValidatingAdmissionRequest(t *testing.T) {
+func TestIPPoolWebhook_ValidatingAdmissionRequest(t *testing.T) {
 	scheme := testScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(validUnifiInstance()).Build()
-	wh := admission.WithValidator(scheme, &UnifiIPPoolWebhook{Client: c})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(validInstance()).Build()
+	wh := admission.WithValidator(scheme, &IPPool{Client: c})
 
-	resp := wh.Handle(context.Background(), createRequest(t, validUnifiIPPool()))
+	resp := wh.Handle(context.Background(), createRequest(t, validIPPool()))
 
 	if !resp.Allowed {
 		t.Fatalf("validating webhook rejected a valid create: code=%d result=%+v",
@@ -201,14 +201,14 @@ func TestUnifiIPPoolWebhook_ValidatingAdmissionRequest(t *testing.T) {
 	}
 }
 
-// TestUnifiIPPoolWebhook_ValidatingAdmissionRequestDenies proves the handler
+// TestIPPoolWebhook_ValidatingAdmissionRequestDenies proves the handler
 // reaches the validation logic rather than merely surviving the call.
-func TestUnifiIPPoolWebhook_ValidatingAdmissionRequestDenies(t *testing.T) {
+func TestIPPoolWebhook_ValidatingAdmissionRequestDenies(t *testing.T) {
 	scheme := testScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(validUnifiInstance()).Build()
-	wh := admission.WithValidator(scheme, &UnifiIPPoolWebhook{Client: c})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(validInstance()).Build()
+	wh := admission.WithValidator(scheme, &IPPool{Client: c})
 
-	pool := validUnifiIPPool()
+	pool := validIPPool()
 	pool.Spec.Subnets = nil // at least one subnet is required
 
 	resp := wh.Handle(context.Background(), createRequest(t, pool))

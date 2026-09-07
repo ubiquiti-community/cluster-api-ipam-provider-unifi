@@ -21,8 +21,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// UnifiInstanceSpec defines the desired state of UnifiInstance.
-type UnifiInstanceSpec struct {
+const (
+	// InstanceKind is the kind name of the Instance resource.
+	InstanceKind = "Instance"
+)
+
+// InstanceSpec defines the desired state of Instance.
+type InstanceSpec struct {
 	// Host is the URL of the Unifi controller
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^https?://`
@@ -42,13 +47,13 @@ type UnifiInstanceSpec struct {
 	Insecure *bool `json:"insecure,omitempty"`
 }
 
-// UnifiInstanceStatus defines the observed state of UnifiInstance.
-type UnifiInstanceStatus struct {
+// InstanceStatus defines the observed state of Instance.
+type InstanceStatus struct {
 	// Ready indicates whether the instance is ready for use.
 	// +optional.
 	Ready *bool `json:"ready,omitempty"`
 
-	// Conditions define the current state of the UnifiInstance using metav1.Conditions
+	// Conditions define the current state of the Instance using metav1.Conditions
 	// +optional.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
@@ -65,32 +70,32 @@ type UnifiInstanceStatus struct {
 	FailureMessage *string `json:"failureMessage,omitempty"`
 }
 
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:path=unifiinstances,scope=Namespaced
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:resource:path=instances,scope=Namespaced,shortName=ui;uinst;unifiinst;unifiinstance;unifiinstances
 // +kubebuilder:storageversion
-// +kubebuilder:printcolumn:name="Ready",type=boolean,JSONPath=`.status.ready`
-// +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.host`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-
-// UnifiInstance is the Schema for the unifiinstances API.
-type UnifiInstance struct {
+// +kubebuilder:subresource:status
+// +kubebuilder:object:root=true
+// +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
+// +kubebuilder:printcolumn:name="Host",type="string",JSONPath=".spec.host"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// Instance is the Schema for the instances API.
+type Instance struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   UnifiInstanceSpec   `json:"spec,omitempty"`
-	Status UnifiInstanceStatus `json:"status,omitempty"`
+	Spec   InstanceSpec   `json:"spec,omitempty"`
+	Status InstanceStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// UnifiInstanceList contains a list of UnifiInstance.
-type UnifiInstanceList struct {
+// InstanceList contains a list of Instance.
+type InstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []UnifiInstance `json:"items"`
+	Items           []Instance `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&UnifiInstance{}, &UnifiInstanceList{})
+	objectTypes = append(objectTypes, &Instance{}, &InstanceList{})
 }

@@ -58,7 +58,7 @@ func TestUnifiProviderAdapter_SetupWithManager(t *testing.T) {
 	}
 }
 
-func TestUnifiProviderAdapter_unifiIPPoolToIPClaims(t *testing.T) {
+func TestUnifiProviderAdapter_ipPoolToIPClaims(t *testing.T) {
 	type fields struct {
 		Client client.Client
 	}
@@ -78,8 +78,8 @@ func TestUnifiProviderAdapter_unifiIPPoolToIPClaims(t *testing.T) {
 			a := &UnifiProviderAdapter{
 				Client: tt.fields.Client,
 			}
-			if got := a.unifiIPPoolToIPClaims(context.Background(), tt.args.obj); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiProviderAdapter.unifiIPPoolToIPClaims() = %v, want %v", got, tt.want)
+			if got := a.ipPoolToIPClaims(context.Background(), tt.args.obj); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnifiProviderAdapter.ipPoolToIPClaims() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -117,7 +117,7 @@ func TestUnifiClaimHandler_FetchPool(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1beta2.IPAddressClaim
-		pool   *v1beta2.UnifiIPPool
+		pool   *v1beta2.IPPool
 	}
 	type args struct{}
 	tests := []struct {
@@ -156,7 +156,7 @@ func TestUnifiClaimHandler_EnsureAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1beta2.IPAddressClaim
-		pool   *v1beta2.UnifiIPPool
+		pool   *v1beta2.IPPool
 	}
 	type args struct {
 		address *ipamv1beta2.IPAddress
@@ -193,7 +193,7 @@ func TestUnifiClaimHandler_ReleaseAddress(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		claim  *ipamv1beta2.IPAddressClaim
-		pool   *v1beta2.UnifiIPPool
+		pool   *v1beta2.IPPool
 	}
 	type args struct{}
 	tests := []struct {

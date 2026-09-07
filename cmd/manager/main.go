@@ -133,20 +133,20 @@ func main() {
 }
 
 func setupControllers(mgr ctrl.Manager, config *managerConfig, ctx context.Context) error {
-	// Setup UnifiInstance controller.
-	if err := (&controllers.UnifiInstanceReconciler{
+	// Setup Instance controller.
+	if err := (&controllers.InstanceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create controller UnifiInstance: %w", err)
+		return fmt.Errorf("unable to create controller Instance: %w", err)
 	}
 
-	// Setup UnifiIPPool controller.
-	if err := (&controllers.UnifiIPPoolReconciler{
+	// Setup IPPool controller.
+	if err := (&controllers.IPPoolReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create controller UnifiIPPool: %w", err)
+		return fmt.Errorf("unable to create controller IPPool: %w", err)
 	}
 
 	// Setup IPAddressClaim controller with UnifiProviderAdapter.
@@ -162,11 +162,11 @@ func setupControllers(mgr ctrl.Manager, config *managerConfig, ctx context.Conte
 	// Setup webhooks if enabled.
 	if config.enableWebhook {
 		setupLog.Info("setting up webhooks")
-		if err := (&webhooks.UnifiIPPoolWebhook{}).SetupWebhookWithManager(mgr); err != nil {
-			return fmt.Errorf("unable to create webhook UnifiIPPool: %w", err)
+		if err := (&webhooks.IPPool{}).SetupWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("unable to create webhook IPPool: %w", err)
 		}
-		if err := (&webhooks.UnifiInstanceWebhook{}).SetupWebhookWithManager(mgr); err != nil {
-			return fmt.Errorf("unable to create webhook UnifiInstance: %w", err)
+		if err := (&webhooks.Instance{}).SetupWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("unable to create webhook Instance: %w", err)
 		}
 	}
 

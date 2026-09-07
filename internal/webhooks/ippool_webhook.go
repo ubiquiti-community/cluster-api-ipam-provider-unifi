@@ -37,28 +37,28 @@ const (
 	skipValidateDeleteWebhookAnnotation = "ipam.cluster.x-k8s.io/skip-validate-delete-webhook"
 )
 
-// UnifiIPPoolWebhook implements validating and defaulting webhooks for UnifiIPPool.
-type UnifiIPPoolWebhook struct {
+// IPPool implements validating and defaulting webhooks for IPPool.
+type IPPool struct {
 	Client client.Client
 }
 
 // SetupWebhookWithManager registers the webhook with the controller manager.
-func (w *UnifiIPPoolWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
+func (w *IPPool) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
 	// Instantiated at the concrete type: the generic handlers build the object
 	// they decode into with reflect.New on T, so T must be a pointer type. An
 	// interface T (runtime.Object) registers fine and then panics on every
 	// request.
-	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.UnifiIPPool{}).
+	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.IPPool{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool,mutating=true,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiippools,verbs=create;update,versions=v1alpha1,name=munifiippool.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=true,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=default.ippool.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // Default implements admission.Defaulter.
-func (w *UnifiIPPoolWebhook) Default(_ context.Context, pool *v1beta2.UnifiIPPool) error {
+func (w *IPPool) Default(_ context.Context, pool *v1beta2.IPPool) error {
 	// Set default namespace for InstanceRef if not specified.
 	if pool.Spec.InstanceRef.Namespace == "" {
 		pool.Spec.InstanceRef.Namespace = pool.Namespace
@@ -67,15 +67,15 @@ func (w *UnifiIPPoolWebhook) Default(_ context.Context, pool *v1beta2.UnifiIPPoo
 	return nil
 }
 
-// +kubebuilder:webhook:path=/validate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool,mutating=false,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiippools,verbs=create;update;delete,versions=v1alpha1,name=vunifiippool.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=false,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=validation.ippool.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // ValidateCreate implements admission.Validator.
-func (w *UnifiIPPoolWebhook) ValidateCreate(ctx context.Context, pool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
+func (w *IPPool) ValidateCreate(ctx context.Context, pool *v1beta2.IPPool) (admission.Warnings, error) {
 	return nil, w.validate(ctx, pool)
 }
 
 // ValidateUpdate implements admission.Validator.
-func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldPool, newPool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
+func (w *IPPool) ValidateUpdate(ctx context.Context, oldPool, newPool *v1beta2.IPPool) (admission.Warnings, error) {
 	// Validate the new pool.
 	if err := w.validate(ctx, newPool); err != nil {
 		return nil, err
@@ -86,14 +86,14 @@ func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldPool, newPoo
 }
 
 // ValidateDelete implements admission.Validator.
-func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, pool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
+func (w *IPPool) ValidateDelete(ctx context.Context, pool *v1beta2.IPPool) (admission.Warnings, error) {
 	// Allow deletion if skip annotation is set.
 	if _, ok := pool.Annotations[skipValidateDeleteWebhookAnnotation]; ok {
 		return nil, nil
 	}
 
 	// Check if there are allocated IPAddresses.
-	addresses, err := poolutil.ListAddressesInUse(ctx, w.Client, pool.Namespace, pool.Name, "UnifiIPPool", "ipam.cluster.x-k8s.io")
+	addresses, err := poolutil.ListAddressesInUse(ctx, w.Client, pool.Namespace, pool.Name, v1beta2.IPPoolKind, v1beta2.GroupVersion.Group)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list allocated addresses: %w", err)
 	}
@@ -101,7 +101,7 @@ func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, pool *v1beta2.U
 	if len(addresses) > 0 {
 		return nil, field.Forbidden(
 			field.NewPath("metadata"),
-			fmt.Sprintf("cannot delete UnifiIPPool with %d allocated IP address(es). Delete IPAddress resources first or add annotation %s=true to bypass this check", len(addresses), skipValidateDeleteWebhookAnnotation),
+			fmt.Sprintf("cannot delete IPPool with %d allocated IP address(es). Delete IPAddress resources first or add annotation %s=true to bypass this check", len(addresses), skipValidateDeleteWebhookAnnotation),
 		)
 	}
 
@@ -109,7 +109,7 @@ func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, pool *v1beta2.U
 }
 
 // validate performs common validation for create and update.
-func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIPPool) error {
+func (w *IPPool) validate(ctx context.Context, pool *v1beta2.IPPool) error {
 	var allErrs field.ErrorList
 
 	// NetworkID is now optional (can be auto-discovered)
@@ -120,13 +120,13 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIP
 		allErrs = append(allErrs, field.Required(field.NewPath("spec", "instanceRef", "name"), "instanceRef.name is required"))
 	}
 
-	// Validate that referenced UnifiInstance exists.
+	// Validate that referenced Instance exists.
 	instanceNamespace := pool.Spec.InstanceRef.Namespace
 	if instanceNamespace == "" {
 		instanceNamespace = pool.Namespace
 	}
 
-	instance := &v1beta2.UnifiInstance{}
+	instance := &v1beta2.Instance{}
 	instanceKey := client.ObjectKey{
 		Name:      pool.Spec.InstanceRef.Name,
 		Namespace: instanceNamespace,
@@ -160,7 +160,7 @@ func (w *UnifiIPPoolWebhook) validate(ctx context.Context, pool *v1beta2.UnifiIP
 }
 
 // validatePreAllocations checks PreAllocations map for issues.
-func validatePreAllocations(pool *v1beta2.UnifiIPPool) field.ErrorList {
+func validatePreAllocations(pool *v1beta2.IPPool) field.ErrorList {
 	var allErrs field.ErrorList
 
 	if len(pool.Spec.PreAllocations) == 0 {
@@ -401,8 +401,8 @@ func validateDNSServers(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.E
 }
 
 // validateUpdate checks if the update would orphan allocated IPs.
-func (w *UnifiIPPoolWebhook) validateUpdate(ctx context.Context, oldPool, newPool *v1beta2.UnifiIPPool) error {
-	addresses, err := poolutil.ListAddressesInUse(ctx, w.Client, oldPool.Namespace, oldPool.Name, "UnifiIPPool", "ipam.cluster.x-k8s.io")
+func (w *IPPool) validateUpdate(ctx context.Context, oldPool, newPool *v1beta2.IPPool) error {
+	addresses, err := poolutil.ListAddressesInUse(ctx, w.Client, oldPool.Namespace, oldPool.Name, v1beta2.IPPoolKind, v1beta2.GroupVersion.Group)
 	if err != nil {
 		return fmt.Errorf("failed to list allocated addresses: %w", err)
 	}
@@ -427,7 +427,7 @@ func (w *UnifiIPPoolWebhook) validateUpdate(ctx context.Context, oldPool, newPoo
 	return nil
 }
 
-func buildNewPoolIPSet(newPool *v1beta2.UnifiIPPool) (*netipx.IPSet, error) {
+func buildNewPoolIPSet(newPool *v1beta2.IPPool) (*netipx.IPSet, error) {
 	var newIPSet *netipx.IPSet
 	if len(newPool.Spec.Subnets) > 0 {
 		var err error

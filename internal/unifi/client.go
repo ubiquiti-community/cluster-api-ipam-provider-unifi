@@ -210,7 +210,7 @@ func (c *ApiClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v
 }
 
 // GetOrAllocateIP gets an existing IP or allocates a new one.
-func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
+func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
 	// First, check if this MAC already has a fixed IP assignment via Client object.
 	existingClient, err := c.api.GetClientByMAC(ctx, c.site, macAddress)
 	if err == nil && existingClient != nil {
@@ -313,7 +313,7 @@ func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPo
 // 1. PreAllocations (static assignment or IP reuse)
 // 2. Annotation request (claim specifies desired IP)
 // 3. Dynamic allocation (iterate through subnets)
-func (c *ApiClient) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
+func (c *ApiClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
 	if pool == nil {
 		return "", 0, "", fmt.Errorf("pool is nil")
 	}

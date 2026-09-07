@@ -43,8 +43,8 @@ func ResourceTransitionedToUnpaused() predicate.Predicate {
 func PoolNoLongerEmpty() predicate.Predicate {
 	return predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPool, oldOK := e.ObjectOld.(*v1beta2.UnifiIPPool)
-			newPool, newOK := e.ObjectNew.(*v1beta2.UnifiIPPool)
+			oldPool, oldOK := e.ObjectOld.(*v1beta2.IPPool)
+			newPool, newOK := e.ObjectNew.(*v1beta2.IPPool)
 
 			if !oldOK || !newOK {
 				return false

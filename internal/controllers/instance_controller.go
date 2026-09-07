@@ -39,27 +39,27 @@ const (
 	DefaultUnifiSite = "default"
 )
 
-// UnifiInstanceReconciler reconciles a UnifiInstance object.
-type UnifiInstanceReconciler struct {
+// InstanceReconciler reconciles a Instance object.
+type InstanceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=unifiinstances,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=unifiinstances/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=unifiinstances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=instances,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=instances/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=instances/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop.
-func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *InstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	instance := &v1beta2.UnifiInstance{}
+	instance := &v1beta2.Instance{}
 	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "unable to fetch UnifiInstance")
+		logger.Error(err, "unable to fetch Instance")
 		return ctrl.Result{}, err
 	}
 
@@ -76,7 +76,7 @@ func (r *UnifiInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return r.updateStatusReady(ctx, instance, logger, client != nil)
 }
 
-func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger) (string, error) {
+func (r *InstanceReconciler) getAPIKey(ctx context.Context, instance *v1beta2.Instance, logger logr.Logger) (string, error) {
 	secret := &corev1.Secret{}
 	secretName := types.NamespacedName{
 		Name:      instance.Spec.CredentialsRef.Name,
@@ -96,7 +96,7 @@ func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *v1bet
 	return apiKey, nil
 }
 
-func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.ApiClient, error) {
+func (r *InstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.Instance, apiKey string, logger logr.Logger) (*unifi.ApiClient, error) {
 	site := DefaultUnifiSite
 	if instance.Spec.Site != nil {
 		site = *instance.Spec.Site
@@ -122,19 +122,19 @@ func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, i
 	return client, nil
 }
 
-func (r *UnifiInstanceReconciler) updateStatusError(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger, reason, message string, origErr error) error {
+func (r *InstanceReconciler) updateStatusError(ctx context.Context, instance *v1beta2.Instance, logger logr.Logger, reason, message string, origErr error) error {
 	logger.Error(origErr, "validation failed")
 	falseVal := false
 	instance.Status.Ready = &falseVal
 	instance.Status.FailureReason = &reason
 	instance.Status.FailureMessage = &message
 	if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
-		logger.Error(updateErr, "unable to update UnifiInstance status")
+		logger.Error(updateErr, "unable to update Instance status")
 	}
 	return origErr
 }
 
-func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instance *v1beta2.UnifiInstance, logger logr.Logger, ready bool) (ctrl.Result, error) {
+func (r *InstanceReconciler) updateStatusReady(ctx context.Context, instance *v1beta2.Instance, logger logr.Logger, ready bool) (ctrl.Result, error) {
 	instance.Status.Ready = &ready
 	instance.Status.FailureReason = nil
 	instance.Status.FailureMessage = nil
@@ -142,18 +142,18 @@ func (r *UnifiInstanceReconciler) updateStatusReady(ctx context.Context, instanc
 	instance.Status.LastSyncTime = &now
 
 	if err := r.Status().Update(ctx, instance); err != nil {
-		logger.Error(err, "unable to update UnifiInstance status")
+		logger.Error(err, "unable to update Instance status")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("successfully validated UnifiInstance", "instance", client.ObjectKeyFromObject(instance))
+	logger.Info("successfully validated Instance", "instance", client.ObjectKeyFromObject(instance))
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *UnifiInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *InstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1beta2.UnifiInstance{}).
+		For(&v1beta2.Instance{}).
 		Complete(r)
 }
 

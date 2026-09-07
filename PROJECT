@@ -14,7 +14,7 @@ resources:
     controller: true
     domain: cluster.x-k8s.io
     group: ipam
-    kind: UnifiInstance
+    kind: Instance
     path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
     version: v1beta2
   - api:
@@ -23,7 +23,7 @@ resources:
     controller: true
     domain: cluster.x-k8s.io
     group: ipam
-    kind: UnifiIPPool
+    kind: IPPool
     path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
     version: v1beta2
 version: "3"

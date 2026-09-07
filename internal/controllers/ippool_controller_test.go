@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TestUnifiIPPoolReconciler_Reconcile(t *testing.T) {
+func TestIPPoolReconciler_Reconcile(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		Scheme *runtime.Scheme
@@ -45,23 +45,23 @@ func TestUnifiIPPoolReconciler_Reconcile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &UnifiIPPoolReconciler{
+			r := &IPPoolReconciler{
 				Client: tt.fields.Client,
 				Scheme: tt.fields.Scheme,
 			}
 			got, err := r.Reconcile(context.Background(), tt.args.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("UnifiIPPoolReconciler.Reconcile() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("IPPoolReconciler.Reconcile() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiIPPoolReconciler.Reconcile() = %v, want %v", got, tt.want)
+				t.Errorf("IPPoolReconciler.Reconcile() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiIPPoolReconciler_ipAddressToUnifiIPPool(t *testing.T) {
+func TestIPPoolReconciler_ipAddressToIPPool(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		Scheme *runtime.Scheme
@@ -79,18 +79,18 @@ func TestUnifiIPPoolReconciler_ipAddressToUnifiIPPool(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &UnifiIPPoolReconciler{
+			r := &IPPoolReconciler{
 				Client: tt.fields.Client,
 				Scheme: tt.fields.Scheme,
 			}
-			if got := r.ipAddressToUnifiIPPool(context.Background(), tt.args.obj); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("UnifiIPPoolReconciler.ipAddressToUnifiIPPool() = %v, want %v", got, tt.want)
+			if got := r.ipAddressToIPPool(context.Background(), tt.args.obj); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("IPPoolReconciler.ipAddressToIPPool() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestUnifiIPPoolReconciler_SetupWithManager(t *testing.T) {
+func TestIPPoolReconciler_SetupWithManager(t *testing.T) {
 	type fields struct {
 		Client client.Client
 		Scheme *runtime.Scheme
@@ -108,12 +108,12 @@ func TestUnifiIPPoolReconciler_SetupWithManager(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &UnifiIPPoolReconciler{
+			r := &IPPoolReconciler{
 				Client: tt.fields.Client,
 				Scheme: tt.fields.Scheme,
 			}
 			if err := r.SetupWithManager(tt.args.mgr); (err != nil) != tt.wantErr {
-				t.Errorf("UnifiIPPoolReconciler.SetupWithManager() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("IPPoolReconciler.SetupWithManager() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
