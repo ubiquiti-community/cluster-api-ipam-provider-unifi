@@ -13,12 +13,12 @@ Successfully implemented IP reuse functionality inspired by the [Metal3 CAPI Pro
 - **Use Cases**:
   - Static IP assignment for known workloads (control planes, ingress nodes)
   - IP reuse during cluster upgrades (copy from Status.Allocations)
-- **Location**: `UnifiIPPool.Spec.PreAllocations map[string]string`
+- **Location**: `IPPool.Spec.PreAllocations map[string]string`
 - **Priority**: Checked first in allocation algorithm (highest priority)
 
 ### 2. Allocations Tracking (Status.Allocations)
 - **Purpose**: Automatically track current IP assignments
-- **Populated By**: UnifiIPPool controller watches IPAddress resources
+- **Populated By**: IPPool controller watches IPAddress resources
 - **Format**: `map[string]string` (claim name → IP address)
 - **Use Case**: Source of truth for copying to PreAllocations before upgrades
 
@@ -78,10 +78,10 @@ PRIORITY 3: Dynamic Allocation (Iteration)
 ## Files Modified
 
 ### API Types
-- ✅ `api/v1beta2/unifiippool_types.go`
-  - Added `PreAllocations map[string]string` to UnifiIPPoolSpec
-  - Added `Allocations map[string]string` to UnifiIPPoolStatus
-  - Added `DiscoveredNetworkID string` to UnifiIPPoolStatus
+- ✅ `api/v1beta2/ippool_types.go`
+  - Added `PreAllocations map[string]string` to IPPoolSpec
+  - Added `Allocations map[string]string` to IPPoolStatus
+  - Added `DiscoveredNetworkID string` to IPPoolStatus
   - Made `NetworkID` optional (deprecated for auto-discovery)
   - Updated `SubnetSpec` to support Start/End ranges
   - Added pool-level Prefix, Gateway, DNSServers fields
@@ -115,14 +115,14 @@ PRIORITY 3: Dynamic Allocation (Iteration)
   - Store MAC address in IPAddress labels
   - Use discovered network ID if NetworkID not configured
 
-- ✅ `internal/controllers/unifiippool_controller.go`
+- ✅ `internal/controllers/ippool_controller.go`
   - Added `updatePoolStatus()` to populate Status.Allocations
   - Added `discoverNetwork()` for network auto-discovery
   - Added `updateNetworkDiscoveryCondition()` for discovery status
   - Updated `syncWithUnifi()` to use discovered network ID
 
 ### Webhooks
-- ✅ `internal/webhooks/unifiippool_webhook.go`
+- ✅ `internal/webhooks/ippool_webhook.go`
   - Made NetworkID validation optional (auto-discovery)
   - Added `validatePreAllocations()` with duplicate/subnet checks
   - Updated `validateSubnet()` to support CIDR XOR Start/End
@@ -142,7 +142,7 @@ PRIORITY 3: Dynamic Allocation (Iteration)
   - Enhanced API documentation with IP reuse context
 
 ### Samples
-- ✅ `config/samples/unifiippool_with_ip_reuse.yaml` (NEW)
+- ✅ `config/samples/ippool_with_ip_reuse.yaml` (NEW)
   - Example with PreAllocations for static IPs
   - Example using Start/End range notation
   - IP reuse workflow documentation with kubectl commands
@@ -163,13 +163,13 @@ spec:
 kubectl apply -f cluster.yaml
 
 # 2. View current allocations
-kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}'
+kubectl get ippool cluster-pool -o jsonpath='{.status.allocations}'
 
 # 3. Before upgrade, copy to PreAllocations
-kubectl patch unifiippool cluster-pool --type=merge -p "$(cat <<EOF
+kubectl patch ippool cluster-pool --type=merge -p "$(cat <<EOF
 {
   "spec": {
-    "preAllocations": $(kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}')
+    "preAllocations": $(kubectl get ippool cluster-pool -o jsonpath='{.status.allocations}')
   }
 }
 EOF
@@ -179,7 +179,7 @@ EOF
 kubectl rollout restart deployment/...
 
 # 5. Verify IP reuse
-kubectl get unifiippool cluster-pool -o jsonpath='{.status.allocations}'
+kubectl get ippool cluster-pool -o jsonpath='{.status.allocations}'
 ```
 
 ## Testing Checklist

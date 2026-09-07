@@ -68,6 +68,49 @@ kubectl apply -f https://github.com/ubiquiti-community/cluster-api-ipam-provider
 kustomize build config/default | kubectl apply -f -
 ```
 
+## Migrating from UnifiIPPool/UnifiInstance
+
+This provider's own kinds were renamed and moved to their own API group, to
+match how [metal3-io/ip-address-manager](https://github.com/metal3-io/ip-address-manager)
+is laid out:
+
+| Before | After |
+| --- | --- |
+| `ipam.cluster.x-k8s.io/v1beta2`, kind `UnifiIPPool` | `unifi.ipam.cluster.x-k8s.io/v1beta2`, kind `IPPool` |
+| `ipam.cluster.x-k8s.io/v1beta2`, kind `UnifiInstance` | `unifi.ipam.cluster.x-k8s.io/v1beta2`, kind `Instance` |
+
+`ipam.cluster.x-k8s.io` belongs to Cluster API, and `IPAddress` and
+`IPAddressClaim` still live there — only this provider's pool and controller
+connection moved out. A claim reaches across the boundary through
+`poolRef.apiGroup`, exactly as metal3's pool does. The version (`v1beta2`) is
+unchanged.
+
+**This is a breaking change with no conversion path.** There is no conversion
+webhook and no storage migration: the old CRDs and any custom resources under
+them are not converted, and existing `IPAddress` objects still carry
+`poolRef.apiGroup: ipam.cluster.x-k8s.io` with `poolRef.kind: UnifiIPPool`,
+neither of which the moved controllers match any more.
+
+To migrate:
+
+1. Record the current allocations, e.g.
+   `kubectl get unifiippool <name> -o jsonpath='{.status.allocations}'`, so they
+   can be carried over as `spec.preAllocations` on the new pool.
+2. Recreate each `UnifiInstance` as an `Instance` and each `UnifiIPPool` as an
+   `IPPool` under `apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2` (the spec
+   fields are unchanged).
+3. Re-point every `IPAddressClaim` at the new pool with
+   `poolRef.apiGroup: unifi.ipam.cluster.x-k8s.io` and `poolRef.kind: IPPool`;
+   existing `IPAddress` objects that reference the old group or kind must be
+   deleted and re-claimed.
+4. Remove the old `unifiippools.ipam.cluster.x-k8s.io` and
+   `unifiinstances.ipam.cluster.x-k8s.io` CRDs once nothing references them.
+
+See [config/samples/example.yaml](config/samples/example.yaml) for a complete
+worked scenario. The new CRDs keep `unifiippool`/`unifiinstance` (and their
+plurals) as short names, so existing `kubectl get unifiippool` habits still
+resolve — to the new kinds.
+
 ## Configuration
 
 ### 1. Create a Unifi Instance
@@ -75,8 +118,8 @@ kustomize build config/default | kubectl apply -f -
 Define your Unifi controller connection:
 
 ```yaml
-apiVersion: ipam.cluster.x-k8s.io/v1alpha1
-kind: UnifiInstance
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: Instance
 metadata:
   name: unifi-controller
   namespace: default
@@ -104,8 +147,8 @@ kubectl create secret generic unifi-credentials \
 Define an IP pool for allocation:
 
 ```yaml
-apiVersion: ipam.cluster.x-k8s.io/v1alpha1
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: cluster-pool
   namespace: default
@@ -130,15 +173,15 @@ spec:
 Cluster API will automatically create IPAddressClaim resources, but you can also create them manually:
 
 ```yaml
-apiVersion: ipam.cluster.x-k8s.io/v1beta1
+apiVersion: ipam.cluster.x-k8s.io/v1beta2
 kind: IPAddressClaim
 metadata:
   name: my-machine-ip
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: cluster-pool
 ```
 
@@ -159,14 +202,14 @@ spec:
          │ References              │ Manages
          ▼                         ▼
 ┌─────────────────┐       ┌──────────────────┐
-│  UnifiIPPool    │       │ Unifi Controller │
+│     IPPool      │       │ Unifi Controller │
 │    (CRD)        │       │   (External)     │
 └────────┬────────┘       └──────────────────┘
          │
          │ References
          ▼
 ┌─────────────────┐
-│ UnifiInstance   │
+│    Instance     │
 │    (CRD)        │
 └─────────────────┘
 ```
@@ -230,7 +273,7 @@ See the [config/samples](config/samples) directory for complete examples.
 - Ensure firewall allows access to Unifi API port (default 8443)
 
 **Issue**: IP addresses not allocated
-- Verify the UnifiIPPool references a valid UnifiInstance
+- Verify the IPPool references a valid Instance
 - Check that the network ID exists in Unifi
 - Ensure subnet CIDR matches Unifi network configuration
 - Review controller logs: `kubectl logs -n ipam-system deployment/unifi-ipam-controller`

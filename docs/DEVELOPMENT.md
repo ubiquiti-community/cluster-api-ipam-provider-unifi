@@ -211,7 +211,7 @@ Runs on PRs to ensure code formatting:
 ```
 .
 ├── api/                    # API definitions (CRDs)
-│   └── v1alpha1/          # v1alpha1 API version
+│   └── v1beta2/           # v1beta2 API version
 ├── cmd/
 │   └── manager/           # Controller manager entrypoint
 ├── config/                # Kubernetes manifests
@@ -286,8 +286,8 @@ make install
 kubectl logs -n ipam-system deployment/unifi-ipam-controller-manager -f
 
 # Check resource status
-kubectl get unifiinstance -A -o yaml
-kubectl get unifiippool -A -o yaml
+kubectl get instance -A -o yaml
+kubectl get ippool -A -o yaml
 ```
 
 ## Contributing

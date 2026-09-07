@@ -10,14 +10,14 @@
 ### 1. Update CRDs with New Fields
 ```bash
 cd /Users/atkini01/src/ubiquiti-community/cluster-api-ipam-provider-unifi
-kubectl apply -f config/crd/bases/ipam.cluster.x-k8s.io_unifiippools.yaml
-kubectl apply -f config/crd/bases/ipam.cluster.x-k8s.io_unifiinstances.yaml
+kubectl apply -f config/crd/bases/unifi.ipam.cluster.x-k8s.io_ippools.yaml
+kubectl apply -f config/crd/bases/unifi.ipam.cluster.x-k8s.io_instances.yaml
 ```
 
-### 2. Check UnifiInstance Configuration
+### 2. Check Instance Configuration
 ```bash
-kubectl get unifiinstances -A
-kubectl get unifiinstance unifi-controller -n default -o yaml
+kubectl get instances -A
+kubectl get instance unifi-controller -n default -o yaml
 ```
 
 ### 3. Build and Deploy Updated Controller
@@ -38,17 +38,17 @@ make run
 
 ```bash
 # Check for PreAllocations field
-kubectl explain unifiippool.spec.preAllocations
+kubectl explain ippool.spec.preAllocations
 
 # Check for Allocations status field
-kubectl explain unifiippool.status.allocations
+kubectl explain ippool.status.allocations
 
 # Check for DiscoveredNetworkID
-kubectl explain unifiippool.status.discoveredNetworkID
+kubectl explain ippool.status.discoveredNetworkID
 
 # Check for subnet Start/End fields
-kubectl explain unifiippool.spec.subnets.start
-kubectl explain unifiippool.spec.subnets.end
+kubectl explain ippool.spec.subnets.start
+kubectl explain ippool.spec.subnets.end
 ```
 
 **Expected**: All fields should be documented
@@ -60,8 +60,8 @@ kubectl explain unifiippool.spec.subnets.end
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-dynamic
   namespace: default
@@ -81,13 +81,13 @@ EOF
 **Validation**:
 ```bash
 # Check pool status
-kubectl get unifiippool test-pool-dynamic -o yaml
+kubectl get ippool test-pool-dynamic -o yaml
 
 # Verify Status.Allocations is initialized (should be empty initially)
-kubectl get unifiippool test-pool-dynamic -o jsonpath='{.status.allocations}'
+kubectl get ippool test-pool-dynamic -o jsonpath='{.status.allocations}'
 
 # Check for network discovery
-kubectl get unifiippool test-pool-dynamic -o jsonpath='{.status.discoveredNetworkID}'
+kubectl get ippool test-pool-dynamic -o jsonpath='{.status.discoveredNetworkID}'
 ```
 
 **Expected**:
@@ -110,8 +110,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-dynamic
 EOF
 ```
@@ -128,7 +128,7 @@ kubectl get ipaddressclaim test-claim-1 -o yaml
 kubectl get ipaddress -n default
 
 # Verify Status.Allocations updated
-kubectl get unifiippool test-pool-dynamic -o jsonpath='{.status.allocations}' | jq .
+kubectl get ippool test-pool-dynamic -o jsonpath='{.status.allocations}' | jq .
 
 # Check MAC label on IPAddress
 kubectl get ipaddress -o yaml | grep "unifi.ipam.cluster.x-k8s.io/mac"
@@ -147,8 +147,8 @@ kubectl get ipaddress -o yaml | grep "unifi.ipam.cluster.x-k8s.io/mac"
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-static
   namespace: default
@@ -176,8 +176,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-static
 EOF
 ```
@@ -188,7 +188,7 @@ EOF
 kubectl get ipaddress -n default -l ipam.cluster.x-k8s.io/pool-name=test-pool-static -o yaml
 
 # Verify exact IP
-kubectl get unifiippool test-pool-static -o jsonpath='{.status.allocations.test-static-claim-1}'
+kubectl get ippool test-pool-static -o jsonpath='{.status.allocations.test-static-claim-1}'
 # Should output: 10.1.40.100
 ```
 
@@ -203,8 +203,8 @@ kubectl get unifiippool test-pool-static -o jsonpath='{.status.allocations.test-
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-invalid-prealloc
   namespace: default
@@ -232,8 +232,8 @@ EOF
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-duplicate-prealloc
   namespace: default
@@ -262,8 +262,8 @@ EOF
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-range
   namespace: default
@@ -287,8 +287,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-range
 EOF
 ```
@@ -296,7 +296,7 @@ EOF
 **Validation**:
 ```bash
 # Check allocated IP is within range
-ALLOCATED_IP=$(kubectl get unifiippool test-pool-range -o jsonpath='{.status.allocations.test-range-claim-1}')
+ALLOCATED_IP=$(kubectl get ippool test-pool-range -o jsonpath='{.status.allocations.test-range-claim-1}')
 echo "Allocated IP: $ALLOCATED_IP"
 # Should be between 10.1.50.10 and 10.1.50.20
 ```
@@ -312,8 +312,8 @@ echo "Allocated IP: $ALLOCATED_IP"
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-invalid-subnet
   namespace: default
@@ -340,8 +340,8 @@ EOF
 **Step 1**: Create pool without PreAllocations
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-reuse
   namespace: default
@@ -367,8 +367,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-reuse
 EOF
 done
@@ -376,13 +376,13 @@ done
 
 **Step 3**: Capture Status.Allocations
 ```bash
-kubectl get unifiippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq . | tee /tmp/allocations.json
+kubectl get ippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq . | tee /tmp/allocations.json
 ```
 
 **Step 4**: Apply PreAllocations (preserve IPs)
 ```bash
-ALLOCS=$(kubectl get unifiippool test-pool-reuse -o jsonpath='{.status.allocations}')
-kubectl patch unifiippool test-pool-reuse --type=merge -p "{\"spec\":{\"preAllocations\":$ALLOCS}}"
+ALLOCS=$(kubectl get ippool test-pool-reuse -o jsonpath='{.status.allocations}')
+kubectl patch ippool test-pool-reuse --type=merge -p "{\"spec\":{\"preAllocations\":$ALLOCS}}"
 ```
 
 **Step 5**: Delete and recreate claims (simulating machine recreation)
@@ -403,8 +403,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-reuse
 EOF
 done
@@ -420,10 +420,10 @@ echo "Original allocations:"
 cat /tmp/allocations.json
 
 echo -e "\nNew allocations:"
-kubectl get unifiippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq .
+kubectl get ippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq .
 
 # They should match!
-diff <(cat /tmp/allocations.json | jq -S .) <(kubectl get unifiippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq -S .)
+diff <(cat /tmp/allocations.json | jq -S .) <(kubectl get ippool test-pool-reuse -o jsonpath='{.status.allocations}' | jq -S .)
 ```
 
 **Expected**:
@@ -447,15 +447,15 @@ metadata:
     ipAddress: "10.1.40.150"
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-dynamic
 EOF
 ```
 
 **Validation**:
 ```bash
-kubectl get unifiippool test-pool-dynamic -o jsonpath='{.status.allocations.test-annotation-claim}'
+kubectl get ippool test-pool-dynamic -o jsonpath='{.status.allocations.test-annotation-claim}'
 # Should output: 10.1.40.150
 ```
 
@@ -470,8 +470,8 @@ kubectl get unifiippool test-pool-dynamic -o jsonpath='{.status.allocations.test
 
 ```bash
 cat <<EOF | kubectl apply -f -
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
-kind: UnifiIPPool
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
 metadata:
   name: test-pool-autodiscover
   namespace: default
@@ -490,10 +490,10 @@ EOF
 **Validation**:
 ```bash
 # Check discovered network ID
-kubectl get unifiippool test-pool-autodiscover -o jsonpath='{.status.discoveredNetworkID}'
+kubectl get ippool test-pool-autodiscover -o jsonpath='{.status.discoveredNetworkID}'
 
 # Check condition
-kubectl get unifiippool test-pool-autodiscover -o yaml | grep -A 5 "type: NetworkDiscovered"
+kubectl get ippool test-pool-autodiscover -o yaml | grep -A 5 "type: NetworkDiscovered"
 ```
 
 **Expected**:
@@ -531,10 +531,10 @@ Status: ✅ Pass | ❌ Fail | ⏳ Pending | ⚠️ Warning
 # Delete all test resources
 kubectl delete ipaddressclaim -n default --all
 kubectl delete ipaddress -n default --all
-kubectl delete unifiippool -n default --all
+kubectl delete ippool -n default --all
 
 # Check for any remaining resources
-kubectl get ipaddressclaim,ipaddress,unifiippool -A
+kubectl get ipaddressclaim,ipaddress,ippool -A
 ```
 
 ---
@@ -546,7 +546,7 @@ kubectl get ipaddressclaim,ipaddress,unifiippool -A
 kubectl logs -n ipam-system deployment/unifi-ipam-controller -f
 
 # Describe resources
-kubectl describe unifiippool test-pool-dynamic
+kubectl describe ippool test-pool-dynamic
 kubectl describe ipaddressclaim test-claim-1
 kubectl describe ipaddress -n default
 
@@ -574,8 +574,8 @@ metadata:
   namespace: default
 spec:
   poolRef:
-    apiGroup: ipam.cluster.x-k8s.io
-    kind: UnifiIPPool
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
     name: test-pool-dynamic
 EOF
 done
@@ -650,21 +650,21 @@ kubectl get ipaddressclaim -n default | grep perf-test | grep -c Bound
 ### Issue 1: Status Field Required (Test 2)
 **Problem**: CRD marked `status` field as required, causing validation error:
 ```
-The UnifiIPPool "test-pool-dynamic" is invalid: status: Required value
+The IPPool "test-pool-dynamic" is invalid: status: Required value
 ```
 
-**Root Cause**: In `api/v1beta2/unifiippool_types.go`, the `Status` field was missing `omitempty` tag:
+**Root Cause**: In `api/v1beta2/ippool_types.go`, the `Status` field was missing `omitempty` tag:
 ```go
-Status UnifiIPPoolStatus `json:"status"`  // Wrong
+Status IPPoolStatus `json:"status"`  // Wrong
 ```
 
 **Fix**: Added `omitempty` tag to make status optional at creation:
 ```go
-Status UnifiIPPoolStatus `json:"status,omitempty"`  // Correct
+Status IPPoolStatus `json:"status,omitempty"`  // Correct
 ```
 
 **Resolution Steps**:
-1. Updated `api/v1beta2/unifiippool_types.go` (line 286)
+1. Updated `api/v1beta2/ippool_types.go` (line 286)
 2. Regenerated CRDs: `make manifests`
-3. Applied updated CRD: `kubectl apply -f config/crd/bases/ipam.cluster.x-k8s.io_unifiippools.yaml`
+3. Applied updated CRD: `kubectl apply -f config/crd/bases/unifi.ipam.cluster.x-k8s.io_ippools.yaml`
 4. Verified fix: `kubectl get crd` shows only `["spec"]` in required fields (was `["metadata","spec","status"]`)
