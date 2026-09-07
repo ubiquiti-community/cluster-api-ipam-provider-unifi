@@ -164,12 +164,12 @@ func (h *UnifiClaimHandler) EnsureAddress(ctx context.Context, address *ipamv1be
 		return nil, nil
 	}
 
-	unifiClient, subnetSpec, err := h.setupAllocation(ctx)
+	unifiClient, err := h.setupAllocation(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return h.allocateIP(ctx, address, unifiClient, subnetSpec, addressesInUse, logger)
+	return h.allocateIP(ctx, address, unifiClient, addressesInUse, logger)
 }
 
 func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta2.IPAddress, addressesInUse []ipamv1beta2.IPAddress) bool {
@@ -181,15 +181,15 @@ func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta2.IPAddress, a
 	return false
 }
 
-func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.ApiClient, *v1beta2.SubnetSpec, error) {
+func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.APIClient, error) {
 	instance, err := h.getInstance(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	secret, err := h.getCredentialsSecret(ctx, instance)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	site := DefaultUnifiSite
@@ -201,21 +201,21 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.ApiClie
 		insecure = *instance.Spec.Insecure
 	}
 
-	unifiClient, err := unifi.NewApiClient(unifi.Config{
+	unifiClient, err := unifi.NewAPIClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   string(secret.Data["apiKey"]),
 		Site:     site,
 		Insecure: insecure,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Unifi client: %w", err)
+		return nil, fmt.Errorf("failed to create Unifi client: %w", err)
 	}
 
 	if len(h.pool.Spec.Subnets) == 0 {
-		return nil, nil, fmt.Errorf("pool has no subnets configured")
+		return nil, fmt.Errorf("pool has no subnets configured")
 	}
 
-	return unifiClient, &h.pool.Spec.Subnets[0], nil
+	return unifiClient, nil
 }
 
 func (h *UnifiClaimHandler) getInstance(ctx context.Context) (*v1beta2.Instance, error) {
@@ -246,11 +246,11 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 	return &secret, nil
 }
 
-func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.ApiClient, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
+func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.APIClient, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
 	// Use network ID from pool (either configured or discovered)
-	networkID := h.pool.Spec.NetworkID
+	networkID := h.pool.Spec.NetworkID //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
 	if networkID == "" {
 		networkID = h.pool.Status.DiscoveredNetworkID
 	}

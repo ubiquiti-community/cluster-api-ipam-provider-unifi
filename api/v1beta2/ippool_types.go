@@ -35,8 +35,9 @@ type IPPoolSpec struct {
 	InstanceRef corev1.ObjectReference `json:"instanceRef"`
 
 	// NetworkID is the Unifi network ID to allocate from
-	// DEPRECATED: Use auto-discovery instead. If set, skips auto-discovery.
 	// This is the _id field from the Unifi network configuration
+	//
+	// Deprecated: Use auto-discovery instead. If set, skips auto-discovery.
 	// +optional
 	NetworkID string `json:"networkId,omitempty"`
 

@@ -229,53 +229,93 @@ func validateSubnet(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.Error
 
 	// If using CIDR notation
 	if hasCIDR {
-		cidr, err := netip.ParsePrefix(subnet.CIDR)
-		if err != nil {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("cidr"), subnet.CIDR, fmt.Sprintf("invalid CIDR: %v", err)))
-			return allErrs
-		}
-
-		allErrs = append(allErrs, validatePrefix(subnet, cidr, fldPath)...)
-		allErrs = append(allErrs, validateGatewayInCIDR(subnet, cidr, fldPath)...)
-		allErrs = append(allErrs, validateExcludeRanges(subnet, cidr, fldPath)...)
+		allErrs = append(allErrs, validateSubnetCIDR(subnet, fldPath)...)
 	} else {
-		// Using Start/End range notation
-		if subnet.Start == "" {
-			allErrs = append(allErrs, field.Required(fldPath.Child("start"), "start is required when using range notation"))
-		}
-		if subnet.End == "" {
-			allErrs = append(allErrs, field.Required(fldPath.Child("end"), "end is required when using range notation"))
-		}
-
-		if subnet.Start != "" && subnet.End != "" {
-			startIP, startErr := netip.ParseAddr(subnet.Start)
-			endIP, endErr := netip.ParseAddr(subnet.End)
-
-			if startErr != nil {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("start"), subnet.Start, fmt.Sprintf("invalid start IP: %v", startErr)))
-			}
-			if endErr != nil {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("end"), subnet.End, fmt.Sprintf("invalid end IP: %v", endErr)))
-			}
-
-			if startErr == nil && endErr == nil {
-				if startIP.Compare(endIP) > 0 {
-					allErrs = append(allErrs, field.Invalid(
-						fldPath.Child("start"),
-						subnet.Start,
-						fmt.Sprintf("start IP %s must be less than or equal to end IP %s", subnet.Start, subnet.End),
-					))
-				}
-
-				// Validate gateway is in range if specified
-				if subnet.Gateway != "" {
-					allErrs = append(allErrs, validateGatewayInRange(subnet, startIP, endIP, fldPath)...)
-				}
-			}
-		}
+		allErrs = append(allErrs, validateSubnetRange(subnet, fldPath)...)
 	}
 
 	allErrs = append(allErrs, validateDNSServers(subnet, fldPath)...)
+
+	return allErrs
+}
+
+// validateSubnetCIDR validates a subnet given in CIDR notation: that the CIDR
+// itself parses, and (via the shared helpers) its prefix, gateway and exclude
+// ranges.
+func validateSubnetCIDR(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	cidr, err := netip.ParsePrefix(subnet.CIDR)
+	if err != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("cidr"), subnet.CIDR, fmt.Sprintf("invalid CIDR: %v", err)))
+		return allErrs
+	}
+
+	allErrs = append(allErrs, validatePrefix(subnet, cidr, fldPath)...)
+	allErrs = append(allErrs, validateGatewayInCIDR(subnet, cidr, fldPath)...)
+	allErrs = append(allErrs, validateExcludeRanges(subnet, cidr, fldPath)...)
+
+	return allErrs
+}
+
+// validateSubnetRange validates a subnet given in Start/End range notation:
+// that both bounds are present and parse, that start <= end, and (if set) that
+// the gateway falls within the range.
+func validateSubnetRange(subnet *v1beta2.SubnetSpec, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if subnet.Start == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("start"), "start is required when using range notation"))
+	}
+	if subnet.End == "" {
+		allErrs = append(allErrs, field.Required(fldPath.Child("end"), "end is required when using range notation"))
+	}
+	if subnet.Start == "" || subnet.End == "" {
+		return allErrs
+	}
+
+	startIP, endIP, parseErrs := parseSubnetRangeBounds(subnet, fldPath)
+	if len(parseErrs) > 0 {
+		return parseErrs
+	}
+
+	return validateRangeOrderAndGateway(subnet, startIP, endIP, fldPath)
+}
+
+// parseSubnetRangeBounds parses subnet's Start/End addresses, collecting a
+// field error for each one that fails to parse.
+func parseSubnetRangeBounds(subnet *v1beta2.SubnetSpec, fldPath *field.Path) (netip.Addr, netip.Addr, field.ErrorList) {
+	var allErrs field.ErrorList
+
+	startIP, startErr := netip.ParseAddr(subnet.Start)
+	if startErr != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("start"), subnet.Start, fmt.Sprintf("invalid start IP: %v", startErr)))
+	}
+	endIP, endErr := netip.ParseAddr(subnet.End)
+	if endErr != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("end"), subnet.End, fmt.Sprintf("invalid end IP: %v", endErr)))
+	}
+
+	return startIP, endIP, allErrs
+}
+
+// validateRangeOrderAndGateway checks that start <= end and, if a gateway is
+// configured on subnet, that it falls within [start, end].
+func validateRangeOrderAndGateway(subnet *v1beta2.SubnetSpec, start, end netip.Addr, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if start.Compare(end) > 0 {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("start"),
+			subnet.Start,
+			fmt.Sprintf("start IP %s must be less than or equal to end IP %s", subnet.Start, subnet.End),
+		))
+	}
+
+	// Validate gateway is in range if specified
+	if subnet.Gateway != "" {
+		allErrs = append(allErrs, validateGatewayInRange(subnet, start, end, fldPath)...)
+	}
 
 	return allErrs
 }
@@ -340,7 +380,7 @@ func validateGatewayInRange(subnet *v1beta2.SubnetSpec, start, end netip.Addr, f
 }
 
 func validateExcludeRanges(subnet *v1beta2.SubnetSpec, cidr netip.Prefix, fldPath *field.Path) field.ErrorList {
-	var allErrs field.ErrorList
+	allErrs := make(field.ErrorList, 0, len(subnet.ExcludeRanges))
 
 	for j, excludeRange := range subnet.ExcludeRanges {
 		excludePath := fldPath.Child("excludeRanges").Index(j)

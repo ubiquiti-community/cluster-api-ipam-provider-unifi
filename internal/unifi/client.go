@@ -19,6 +19,7 @@ package unifi
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -39,8 +40,8 @@ type Config struct {
 	Insecure bool
 }
 
-// ApiClient wraps the Unifi API client with IPAM-specific operations.
-type ApiClient struct {
+// APIClient wraps the Unifi API client with IPAM-specific operations.
+type APIClient struct {
 	api  *unifi.ApiClient
 	site string
 }
@@ -74,8 +75,8 @@ const (
 	requestRetryMax       = 1
 )
 
-// NewApiClient creates a new Unifi client.
-func NewApiClient(cfg Config) (*ApiClient, error) {
+// NewAPIClient creates a new Unifi client.
+func NewAPIClient(cfg Config) (*APIClient, error) {
 	if cfg.Site == "" {
 		cfg.Site = "default"
 	}
@@ -97,14 +98,14 @@ func NewApiClient(cfg Config) (*ApiClient, error) {
 		return nil, fmt.Errorf("failed to create Unifi client: %w", err)
 	}
 
-	return &ApiClient{
+	return &APIClient{
 		api:  client,
 		site: cfg.Site,
 	}, nil
 }
 
 // ValidateCredentials tests the connection and credentials.
-func (c *ApiClient) ValidateCredentials(ctx context.Context) error {
+func (c *APIClient) ValidateCredentials(ctx context.Context) error {
 	// Try to list networks as a validation check.
 	_, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
@@ -114,7 +115,7 @@ func (c *ApiClient) ValidateCredentials(ctx context.Context) error {
 }
 
 // GetNetwork retrieves network information by ID.
-func (c *ApiClient) GetNetwork(ctx context.Context, networkID string) (*unifi.Network, error) {
+func (c *APIClient) GetNetwork(ctx context.Context, networkID string) (*unifi.Network, error) {
 	networks, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
@@ -133,7 +134,7 @@ func (c *ApiClient) GetNetwork(ctx context.Context, networkID string) (*unifi.Ne
 // This syncs the CIDR, gateway, and optionally calculates prefix and exclude ranges based on DHCP settings.
 //
 //nolint:cyclop // Network configuration sync requires multiple conditional checks
-func (c *ApiClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
+func (c *APIClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
 	network, err := c.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, err
@@ -210,52 +211,11 @@ func (c *ApiClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v
 }
 
 // GetOrAllocateIP gets an existing IP or allocates a new one.
-func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
+func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
 	// First, check if this MAC already has a fixed IP assignment via Client object.
 	existingClient, err := c.api.GetClientByMAC(ctx, c.site, macAddress)
 	if err == nil && existingClient != nil {
-		// Client exists - return existing allocation with Prefix and Gateway.
-		// Need to determine prefix and gateway from pool config.
-		defaultPrefix := int32(24)
-		if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
-			defaultPrefix = *pool.Spec.Prefix
-		}
-
-		// Find subnet containing the existing IP to get accurate prefix/gateway
-		prefix := defaultPrefix
-		gateway := pool.Spec.Gateway
-		addr, err := netip.ParseAddr(existingClient.FixedIP)
-		if err == nil {
-			for _, subnet := range pool.Spec.Subnets {
-				// Check if IP is in this subnet
-				var contains bool
-				if subnet.CIDR != "" {
-					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
-						contains = subnetPrefix.Contains(addr)
-					}
-				} else if subnet.Start != "" && subnet.End != "" {
-					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
-						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
-							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
-						}
-					}
-				}
-				if contains {
-					prefix = poolutil.GetPrefix(subnet, defaultPrefix)
-					gateway = poolutil.GetGateway(subnet, pool.Spec.Gateway)
-					break
-				}
-			}
-		}
-
-		return &IPAllocation{
-			IPAddress:  existingClient.FixedIP,
-			MacAddress: existingClient.MAC,
-			Hostname:   existingClient.Hostname,
-			UseFixedIP: existingClient.UseFixedIP,
-			Prefix:     prefix,
-			Gateway:    gateway,
-		}, nil
+		return allocationFromExistingClient(pool, existingClient), nil
 	}
 
 	// A NotFoundError means this MAC simply has no assignment yet -- the normal
@@ -313,157 +273,94 @@ func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, c
 // 1. PreAllocations (static assignment or IP reuse)
 // 2. Annotation request (claim specifies desired IP)
 // 3. Dynamic allocation (iterate through subnets)
-func (c *ApiClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
+func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
 	if pool == nil {
 		return "", 0, "", fmt.Errorf("pool is nil")
 	}
 	if len(pool.Spec.Subnets) == 0 {
 		return "", 0, "", fmt.Errorf("pool has no configured subnets")
 	}
+	defaultPrefix := defaultPrefixFor(pool)
 
-	// Get default prefix for validation
-	defaultPrefix := int32(24) // fallback
-	if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
-		defaultPrefix = *pool.Spec.Prefix
+	ip, prefix, gateway, ok, err := c.allocateFromPreAllocation(ctx, pool, claim, network, addressesInUse, defaultPrefix)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if ok {
+		return ip, prefix, gateway, nil
 	}
 
-	// PRIORITY 1: Check PreAllocations map
-	if pool.Spec.PreAllocations != nil && claim != nil {
-		if prealloc, exists := pool.Spec.PreAllocations[claim.Name]; exists {
-			// Validate preallocated IP is in configured subnets
-			if !poolutil.IPInSubnets(prealloc, pool.Spec.Subnets, defaultPrefix) {
-				return "", 0, "", fmt.Errorf("preallocated IP %s for claim %s is not in configured subnets", prealloc, claim.Name)
-			}
-
-			// Check if preallocated IP is already assigned to a different claim
-			for _, addr := range addressesInUse {
-				if addr.Spec.Address == prealloc {
-					// Check if it's assigned to the same claim (reuse scenario)
-					if addr.Spec.ClaimRef.Name == claim.Name {
-						// Same claim - this is IP reuse, allow it
-						continue
-					}
-					return "", 0, "", fmt.Errorf("preallocated IP %s is already assigned to claim %s", prealloc, addr.Spec.ClaimRef.Name)
-				}
-			}
-
-			// Check Unifi for conflicts
-			staticAssignments, err := c.GetStaticAssignments(ctx, network.ID)
-			if err != nil {
-				return "", 0, "", fmt.Errorf("failed to check Unifi static assignments: %w", err)
-			}
-			for _, sa := range staticAssignments {
-				if sa.IP == prealloc {
-					// Check if it's the same MAC (reuse scenario)
-					macAddress := generateMACForClaim(claim.Name)
-					if sa.MAC == macAddress {
-						// Same MAC - this is IP reuse from previous allocation
-						continue
-					}
-					return "", 0, "", fmt.Errorf("preallocated IP %s has Unifi conflict with MAC %s", prealloc, sa.MAC)
-				}
-			}
-
-			// Find which subnet contains this IP to get metadata
-			for _, subnet := range pool.Spec.Subnets {
-				prefix := poolutil.GetPrefix(subnet, defaultPrefix)
-				gateway := poolutil.GetGateway(subnet, pool.Spec.Gateway)
-
-				addr, err := netip.ParseAddr(prealloc)
-				if err != nil {
-					continue
-				}
-
-				// Check if IP is in this subnet
-				var contains bool
-				if subnet.CIDR != "" {
-					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
-						contains = subnetPrefix.Contains(addr)
-					}
-				} else if subnet.Start != "" && subnet.End != "" {
-					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
-						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
-							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
-						}
-					}
-				}
-				if contains {
-					return prealloc, prefix, gateway, nil
-				}
-			}
-
-			// If we reach here, IP is valid but couldn't determine subnet metadata
-			return prealloc, defaultPrefix, pool.Spec.Gateway, nil
-		}
+	ip, prefix, gateway, ok, err = c.allocateFromAnnotation(ctx, pool, claim, network, addressesInUse, defaultPrefix)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if ok {
+		return ip, prefix, gateway, nil
 	}
 
-	// PRIORITY 2: Check annotation for requested IP
-	if claim != nil && claim.Annotations != nil {
-		if requestedIP, exists := claim.Annotations["ipAddress"]; exists && requestedIP != "" {
-			// Validate requested IP (similar to preallocated IP validation)
-			if !poolutil.IPInSubnets(requestedIP, pool.Spec.Subnets, defaultPrefix) {
-				return "", 0, "", fmt.Errorf("requested IP %s is not in configured subnets", requestedIP)
-			}
+	return c.allocateDynamic(ctx, pool, network, addressesInUse, defaultPrefix)
+}
 
-			// Check if already assigned
-			for _, addr := range addressesInUse {
-				if addr.Spec.Address == requestedIP {
-					return "", 0, "", fmt.Errorf("requested IP %s is already assigned", requestedIP)
-				}
-			}
-
-			// Check Unifi for conflicts
-			staticAssignments, err := c.GetStaticAssignments(ctx, network.ID)
-			if err != nil {
-				return "", 0, "", fmt.Errorf("failed to check Unifi static assignments: %w", err)
-			}
-			for _, sa := range staticAssignments {
-				if sa.IP == requestedIP {
-					return "", 0, "", fmt.Errorf("requested IP %s has Unifi conflict", requestedIP)
-				}
-			}
-
-			// Find subnet metadata
-			for _, subnet := range pool.Spec.Subnets {
-				prefix := poolutil.GetPrefix(subnet, defaultPrefix)
-				gateway := poolutil.GetGateway(subnet, pool.Spec.Gateway)
-
-				addr, err := netip.ParseAddr(requestedIP)
-				if err != nil {
-					continue
-				}
-
-				// Check if IP is in this subnet
-				var contains bool
-				if subnet.CIDR != "" {
-					if subnetPrefix, err := netip.ParsePrefix(subnet.CIDR); err == nil {
-						contains = subnetPrefix.Contains(addr)
-					}
-				} else if subnet.Start != "" && subnet.End != "" {
-					if startIP, err := netip.ParseAddr(subnet.Start); err == nil {
-						if endIP, err := netip.ParseAddr(subnet.End); err == nil {
-							contains = addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
-						}
-					}
-				}
-				if contains {
-					return requestedIP, prefix, gateway, nil
-				}
-			}
-
-			// If we reach here, IP is valid but couldn't determine subnet metadata
-			return requestedIP, defaultPrefix, pool.Spec.Gateway, nil
-		}
+// allocateFromPreAllocation honors an explicit pool.Spec.PreAllocations entry for
+// claim, if one exists. ok is false (with a nil error) when no entry applies, so
+// the caller falls through to the next allocation priority.
+func (c *APIClient) allocateFromPreAllocation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
+	if pool.Spec.PreAllocations == nil || claim == nil {
+		return "", 0, "", false, nil
+	}
+	prealloc, exists := pool.Spec.PreAllocations[claim.Name]
+	if !exists {
+		return "", 0, "", false, nil
 	}
 
-	// PRIORITY 3: Dynamic allocation using iteration
-	// Build map of allocated IPs (from both CAPI and Unifi)
-	allocatedIPs := make(map[string]bool)
+	if !poolutil.IPInSubnets(prealloc, pool.Spec.Subnets, defaultPrefix) {
+		return "", 0, "", false, fmt.Errorf("preallocated IP %s for claim %s is not in configured subnets", prealloc, claim.Name)
+	}
+	if err := preAllocationConflict(addressesInUse, prealloc, claim.Name); err != nil {
+		return "", 0, "", false, err
+	}
+	if err := c.checkUnifiPreAllocationConflict(ctx, network.ID, prealloc, claim.Name); err != nil {
+		return "", 0, "", false, err
+	}
+
+	prefix, gateway = subnetMetadataForIP(pool, prealloc, defaultPrefix)
+	return prealloc, prefix, gateway, true, nil
+}
+
+// allocateFromAnnotation honors claim's "ipAddress" annotation, if set. ok is
+// false (with a nil error) when the claim has no such request, so the caller
+// falls through to dynamic allocation.
+func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
+	if claim == nil || claim.Annotations == nil {
+		return "", 0, "", false, nil
+	}
+	requestedIP, exists := claim.Annotations["ipAddress"]
+	if !exists || requestedIP == "" {
+		return "", 0, "", false, nil
+	}
+
+	if !poolutil.IPInSubnets(requestedIP, pool.Spec.Subnets, defaultPrefix) {
+		return "", 0, "", false, fmt.Errorf("requested IP %s is not in configured subnets", requestedIP)
+	}
+	if err := requestedIPConflict(addressesInUse, requestedIP); err != nil {
+		return "", 0, "", false, err
+	}
+	if err := c.checkUnifiRequestedIPConflict(ctx, network.ID, requestedIP); err != nil {
+		return "", 0, "", false, err
+	}
+
+	prefix, gateway = subnetMetadataForIP(pool, requestedIP, defaultPrefix)
+	return requestedIP, prefix, gateway, true, nil
+}
+
+// allocateDynamic picks the first free IP across pool's subnets, skipping each
+// subnet's gateway and any IP already recorded in-use by CAPI or Unifi.
+func (c *APIClient) allocateDynamic(ctx context.Context, pool *v1beta2.IPPool, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (string, int32, string, error) {
+	allocatedIPs := make(map[string]bool, len(addressesInUse))
 	for _, addr := range addressesInUse {
 		allocatedIPs[addr.Spec.Address] = true
 	}
 
-	// Get Unifi static assignments
 	staticAssignments, err := c.GetStaticAssignments(ctx, network.ID)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("failed to get Unifi static assignments: %w", err)
@@ -472,39 +369,161 @@ func (c *ApiClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, cl
 		allocatedIPs[sa.IP] = true
 	}
 
-	// Iterate through all subnets
 	for _, subnet := range pool.Spec.Subnets {
 		prefix := poolutil.GetPrefix(subnet, defaultPrefix)
 		gateway := poolutil.GetGateway(subnet, pool.Spec.Gateway)
 
-		// Iterate through IPs in this subnet
-		index := 0
-		for {
-			ip, err := poolutil.GetIPAddress(subnet, defaultPrefix, index)
-			if err != nil {
-				// Out of range or error - try next subnet
-				break
-			}
-			index++
-
-			ipStr := ip.String()
-
-			// Skip gateway
-			if ipStr == gateway {
-				continue
-			}
-
-			// Skip if already allocated
-			if allocatedIPs[ipStr] {
-				continue
-			}
-
-			// Found free IP!
-			return ipStr, prefix, gateway, nil
+		if ip, ok := nextFreeIPInSubnet(subnet, defaultPrefix, gateway, allocatedIPs); ok {
+			return ip, prefix, gateway, nil
 		}
 	}
 
 	return "", 0, "", fmt.Errorf("exhausted IP pool: no free IPs available")
+}
+
+// nextFreeIPInSubnet walks subnet's addresses in order and returns the first one
+// that is neither the gateway nor already recorded in allocatedIPs.
+func nextFreeIPInSubnet(subnet v1beta2.SubnetSpec, defaultPrefix int32, gateway string, allocatedIPs map[string]bool) (string, bool) {
+	for index := 0; ; index++ {
+		ip, err := poolutil.GetIPAddress(subnet, defaultPrefix, index)
+		if err != nil {
+			// Out of range - try the next subnet.
+			return "", false
+		}
+
+		ipStr := ip.String()
+		if ipStr == gateway || allocatedIPs[ipStr] {
+			continue
+		}
+
+		return ipStr, true
+	}
+}
+
+// preAllocationConflict reports whether prealloc is already assigned, via a CAPI
+// IPAddress, to a claim other than claimName. Reassigning the same claim's own
+// address is allowed (reuse).
+func preAllocationConflict(addressesInUse []ipamv1beta2.IPAddress, prealloc, claimName string) error {
+	for _, addr := range addressesInUse {
+		if addr.Spec.Address != prealloc || addr.Spec.ClaimRef.Name == claimName {
+			continue
+		}
+		return fmt.Errorf("preallocated IP %s is already assigned to claim %s", prealloc, addr.Spec.ClaimRef.Name)
+	}
+	return nil
+}
+
+// requestedIPConflict reports whether requestedIP is already assigned to any
+// claim via a CAPI IPAddress.
+func requestedIPConflict(addressesInUse []ipamv1beta2.IPAddress, requestedIP string) error {
+	for _, addr := range addressesInUse {
+		if addr.Spec.Address == requestedIP {
+			return fmt.Errorf("requested IP %s is already assigned", requestedIP)
+		}
+	}
+	return nil
+}
+
+// checkUnifiPreAllocationConflict reports whether prealloc is already a static
+// assignment in Unifi under a MAC other than the one generated for claimName
+// (which would mean it's a previous allocation for the same claim being reused).
+func (c *APIClient) checkUnifiPreAllocationConflict(ctx context.Context, networkID, prealloc, claimName string) error {
+	staticAssignments, err := c.GetStaticAssignments(ctx, networkID)
+	if err != nil {
+		return fmt.Errorf("failed to check Unifi static assignments: %w", err)
+	}
+	macAddress := generateMACForClaim(claimName)
+	for _, sa := range staticAssignments {
+		if sa.IP != prealloc || sa.MAC == macAddress {
+			continue
+		}
+		return fmt.Errorf("preallocated IP %s has Unifi conflict with MAC %s", prealloc, sa.MAC)
+	}
+	return nil
+}
+
+// checkUnifiRequestedIPConflict reports whether requestedIP is already a static
+// assignment in Unifi.
+func (c *APIClient) checkUnifiRequestedIPConflict(ctx context.Context, networkID, requestedIP string) error {
+	staticAssignments, err := c.GetStaticAssignments(ctx, networkID)
+	if err != nil {
+		return fmt.Errorf("failed to check Unifi static assignments: %w", err)
+	}
+	for _, sa := range staticAssignments {
+		if sa.IP == requestedIP {
+			return fmt.Errorf("requested IP %s has Unifi conflict", requestedIP)
+		}
+	}
+	return nil
+}
+
+// allocationFromExistingClient builds the IPAllocation for a MAC that already has
+// a fixed-IP Client in Unifi, resolving prefix/gateway from whichever pool subnet
+// contains the address.
+func allocationFromExistingClient(pool *v1beta2.IPPool, existingClient *unifi.Client) *IPAllocation {
+	defaultPrefix := defaultPrefixFor(pool)
+	prefix, gateway := defaultPrefix, pool.Spec.Gateway
+	if _, err := netip.ParseAddr(existingClient.FixedIP); err == nil {
+		prefix, gateway = subnetMetadataForIP(pool, existingClient.FixedIP, defaultPrefix)
+	}
+
+	return &IPAllocation{
+		IPAddress:  existingClient.FixedIP,
+		MacAddress: existingClient.MAC,
+		Hostname:   existingClient.Hostname,
+		UseFixedIP: existingClient.UseFixedIP,
+		Prefix:     prefix,
+		Gateway:    gateway,
+	}
+}
+
+// defaultPrefixFor returns pool's configured default prefix, falling back to /24.
+func defaultPrefixFor(pool *v1beta2.IPPool) int32 {
+	if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
+		return *pool.Spec.Prefix
+	}
+	return 24
+}
+
+// subnetMetadataForIP finds which of pool's subnets contains ipStr and returns its
+// prefix and gateway, falling back to defaultPrefix and the pool's own gateway
+// when ipStr doesn't parse or no configured subnet claims it.
+func subnetMetadataForIP(pool *v1beta2.IPPool, ipStr string, defaultPrefix int32) (prefix int32, gateway string) {
+	prefix, gateway = defaultPrefix, pool.Spec.Gateway
+
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return prefix, gateway
+	}
+
+	for _, subnet := range pool.Spec.Subnets {
+		if subnetContainsAddr(subnet, addr) {
+			return poolutil.GetPrefix(subnet, defaultPrefix), poolutil.GetGateway(subnet, pool.Spec.Gateway)
+		}
+	}
+
+	return prefix, gateway
+}
+
+// subnetContainsAddr reports whether addr falls within subnet's CIDR or its
+// Start/End range.
+func subnetContainsAddr(subnet v1beta2.SubnetSpec, addr netip.Addr) bool {
+	if subnet.CIDR != "" {
+		subnetPrefix, err := netip.ParsePrefix(subnet.CIDR)
+		return err == nil && subnetPrefix.Contains(addr)
+	}
+	if subnet.Start != "" && subnet.End != "" {
+		startIP, err := netip.ParseAddr(subnet.Start)
+		if err != nil {
+			return false
+		}
+		endIP, err := netip.ParseAddr(subnet.End)
+		if err != nil {
+			return false
+		}
+		return addr.Compare(startIP) >= 0 && addr.Compare(endIP) <= 0
+	}
+	return false
 }
 
 // generateMACForClaim generates a deterministic MAC address for a claim name.
@@ -518,41 +537,8 @@ func generateMACForClaim(claimName string) string {
 	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", h[0], h[1], h[2], h[3], h[4])
 }
 
-// getExistingClientIPs retrieves all currently active/leased IPs from Unifi clients.
-// This helps avoid allocating IPs that are already in use by existing network devices.
-func (c *ApiClient) getExistingClientIPs(ctx context.Context, networkID string) ([]string, error) {
-	// List all active clients on the site (this includes both wired and wireless clients)
-	clients, err := c.api.ListClientInfo(ctx, c.site)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list active clients: %w", err)
-	}
-
-	// Collect IPs from clients - include both current IPs and fixed IP assignments
-	existingIPs := make([]string, 0, len(clients))
-	for i := range clients {
-		client := &clients[i]
-
-		// Add the client's current IP (active connection)
-		if client.IP != "" {
-			// Filter by network ID if specified
-			if networkID == "" || client.NetworkId == networkID {
-				existingIPs = append(existingIPs, client.IP)
-			}
-		}
-
-		// Also add any fixed IP assignments from the Client records
-		if client.FixedIP != "" {
-			if networkID == "" || client.NetworkId == networkID {
-				existingIPs = append(existingIPs, client.FixedIP)
-			}
-		}
-	}
-
-	return existingIPs, nil
-}
-
 // ReleaseIP releases an allocated IP address.
-func (c *ApiClient) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress string) error {
+func (c *APIClient) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress string) error {
 	// Delete the Client object which releases the fixed IP assignment.
 	err := c.api.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
@@ -575,7 +561,7 @@ type StaticAssignment struct {
 
 // GetStaticAssignments retrieves all static DHCP assignments for a network.
 // This queries all Unifi Client objects with fixed IPs in the specified network.
-func (c *ApiClient) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
+func (c *APIClient) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
 	// List all clients with fixed IP assignments
 	clients, err := c.api.ListClient(ctx, c.site)
 	if err != nil {
@@ -599,7 +585,7 @@ func (c *ApiClient) GetStaticAssignments(ctx context.Context, networkID string) 
 }
 
 // CreateStaticAssignment creates a static DHCP assignment in Unifi.
-func (c *ApiClient) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
+func (c *APIClient) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
 	// Create or update Client object with fixed IP
 	client := &unifi.Client{
 		MAC:        macAddress,
@@ -618,7 +604,7 @@ func (c *ApiClient) CreateStaticAssignment(ctx context.Context, networkID, ip, m
 }
 
 // DeleteStaticAssignment removes a static DHCP assignment by MAC address.
-func (c *ApiClient) DeleteStaticAssignment(ctx context.Context, networkID, macAddress string) error {
+func (c *APIClient) DeleteStaticAssignment(ctx context.Context, networkID, macAddress string) error {
 	err := c.api.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
 		// If the client is not found, that's acceptable - already released.
@@ -633,7 +619,7 @@ func (c *ApiClient) DeleteStaticAssignment(ctx context.Context, networkID, macAd
 
 // FindNetworkForSubnet auto-discovers a Unifi network that contains the given subnet.
 // Returns the network if found, or an error if no matching network exists.
-func (c *ApiClient) FindNetworkForSubnet(ctx context.Context, subnet string) (*unifi.Network, error) {
+func (c *APIClient) FindNetworkForSubnet(ctx context.Context, subnet string) (*unifi.Network, error) {
 	// Parse the subnet to check
 	var subnetPrefix netip.Prefix
 	var err error
@@ -691,17 +677,14 @@ func lastAddrInPrefix(prefix netip.Prefix) netip.Addr {
 
 		// Get base IP as uint32
 		octets := addr.As4()
-		ipInt := uint32(octets[0])<<24 | uint32(octets[1])<<16 | uint32(octets[2])<<8 | uint32(octets[3])
+		ipInt := binary.BigEndian.Uint32(octets[:])
 
 		// Add host mask
 		lastInt := ipInt | hostMask
 
-		return netip.AddrFrom4([4]byte{
-			byte(lastInt >> 24),
-			byte(lastInt >> 16),
-			byte(lastInt >> 8),
-			byte(lastInt),
-		})
+		var last [4]byte
+		binary.BigEndian.PutUint32(last[:], lastInt)
+		return netip.AddrFrom4(last)
 	}
 
 	// For IPv6, use simpler approach
@@ -798,20 +781,16 @@ func calculateBroadcastAddr(prefix netip.Prefix) netip.Addr {
 	hostMask := uint32((1 << (32 - maskBits)) - 1)
 
 	// Convert address to uint32
-	ipInt := uint32(addr[0])<<24 | uint32(addr[1])<<16 | uint32(addr[2])<<8 | uint32(addr[3])
+	ipInt := binary.BigEndian.Uint32(addr[:])
 
 	// OR with host mask to get broadcast
 	broadcastInt := ipInt | hostMask
 
 	// Convert back to addr
-	broadcastAddr := netip.AddrFrom4([4]byte{
-		byte(broadcastInt >> 24),
-		byte(broadcastInt >> 16),
-		byte(broadcastInt >> 8),
-		byte(broadcastInt),
-	})
+	var broadcast [4]byte
+	binary.BigEndian.PutUint32(broadcast[:], broadcastInt)
 
-	return broadcastAddr
+	return netip.AddrFrom4(broadcast)
 }
 
 // incrementIP returns the next IP address.

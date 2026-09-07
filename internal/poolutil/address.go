@@ -17,6 +17,7 @@ limitations under the License.
 package poolutil
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net/netip"
 
@@ -98,7 +99,7 @@ func IPInSubnets(ip string, subnets []v1beta2.SubnetSpec, defaultPrefix int32) b
 	}
 
 	for _, subnet := range subnets {
-		if inSubnet(addr, subnet, defaultPrefix) {
+		if inSubnet(addr, subnet) {
 			return true
 		}
 	}
@@ -107,7 +108,7 @@ func IPInSubnets(ip string, subnets []v1beta2.SubnetSpec, defaultPrefix int32) b
 }
 
 // inSubnet checks if an IP is within a specific subnet.
-func inSubnet(addr netip.Addr, subnet v1beta2.SubnetSpec, defaultPrefix int32) bool {
+func inSubnet(addr netip.Addr, subnet v1beta2.SubnetSpec) bool {
 	if subnet.CIDR != "" {
 		prefix, err := netip.ParsePrefix(subnet.CIDR)
 		if err != nil {
@@ -166,8 +167,7 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 		hostMask := uint32((1 << hostBits) - 1)
 
 		// Convert IP to uint32
-		ipUint := uint32(maskBytes[0])<<24 | uint32(maskBytes[1])<<16 |
-			uint32(maskBytes[2])<<8 | uint32(maskBytes[3])
+		ipUint := binary.BigEndian.Uint32(maskBytes[:])
 
 		// Set all host bits (this gives broadcast address)
 		broadcastUint := ipUint | hostMask
@@ -176,12 +176,9 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 		lastUsableUint := broadcastUint - 1
 
 		// Convert back to netip.Addr
-		return netip.AddrFrom4([4]byte{
-			byte(lastUsableUint >> 24),
-			byte(lastUsableUint >> 16),
-			byte(lastUsableUint >> 8),
-			byte(lastUsableUint),
-		})
+		var last [4]byte
+		binary.BigEndian.PutUint32(last[:], lastUsableUint)
+		return netip.AddrFrom4(last)
 	}
 
 	// IPv6: Calculate last IP using bit operations
@@ -189,14 +186,8 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 	hostBits := 128 - bits
 
 	// Convert to two uint64s (high and low 64 bits)
-	high := uint64(maskBytes[0])<<56 | uint64(maskBytes[1])<<48 |
-		uint64(maskBytes[2])<<40 | uint64(maskBytes[3])<<32 |
-		uint64(maskBytes[4])<<24 | uint64(maskBytes[5])<<16 |
-		uint64(maskBytes[6])<<8 | uint64(maskBytes[7])
-	low := uint64(maskBytes[8])<<56 | uint64(maskBytes[9])<<48 |
-		uint64(maskBytes[10])<<40 | uint64(maskBytes[11])<<32 |
-		uint64(maskBytes[12])<<24 | uint64(maskBytes[13])<<16 |
-		uint64(maskBytes[14])<<8 | uint64(maskBytes[15])
+	high := binary.BigEndian.Uint64(maskBytes[0:8])
+	low := binary.BigEndian.Uint64(maskBytes[8:16])
 
 	// Set all host bits
 	if hostBits <= 64 {
@@ -211,12 +202,10 @@ func lastUsableIP(prefix netip.Prefix) netip.Addr {
 	}
 
 	// For IPv6, we return the last IP (no broadcast address to skip)
-	return netip.AddrFrom16([16]byte{
-		byte(high >> 56), byte(high >> 48), byte(high >> 40), byte(high >> 32),
-		byte(high >> 24), byte(high >> 16), byte(high >> 8), byte(high),
-		byte(low >> 56), byte(low >> 48), byte(low >> 40), byte(low >> 32),
-		byte(low >> 24), byte(low >> 16), byte(low >> 8), byte(low),
-	})
+	var last [16]byte
+	binary.BigEndian.PutUint64(last[0:8], high)
+	binary.BigEndian.PutUint64(last[8:16], low)
+	return netip.AddrFrom16(last)
 }
 
 // GetPrefix returns the prefix to use for a subnet, considering overrides.
@@ -227,7 +216,7 @@ func GetPrefix(subnet v1beta2.SubnetSpec, defaultPrefix int32) int32 {
 	if subnet.CIDR != "" {
 		prefix, err := netip.ParsePrefix(subnet.CIDR)
 		if err == nil {
-			return int32(prefix.Bits())
+			return int32(prefix.Bits()) // #nosec G115 - prefix bits are within safe range
 		}
 	}
 	return defaultPrefix

@@ -98,7 +98,7 @@ func (r *IPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Discover Unifi network if needed (when NetworkID not configured)
-	if pool.Spec.NetworkID == "" && pool.Status.DiscoveredNetworkID == "" {
+	if pool.Spec.NetworkID == "" && pool.Status.DiscoveredNetworkID == "" { //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
 		if err := r.discoverNetwork(ctx, pool, instance, logger); err != nil {
 			logger.Error(err, "failed to discover Unifi network")
 			// Set condition and requeue
@@ -361,7 +361,7 @@ func (r *IPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.IPPo
 	}
 
 	// Determine network ID to use (configured or discovered)
-	networkID := pool.Spec.NetworkID
+	networkID := pool.Spec.NetworkID //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
 	if networkID == "" {
 		networkID = pool.Status.DiscoveredNetworkID
 	}
@@ -589,7 +589,7 @@ func (r *IPPoolReconciler) calculateNextSyncInterval(pool *v1beta2.IPPool) time.
 }
 
 // createUnifiClient creates a Unifi client from instance credentials.
-func (r *IPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1beta2.Instance, namespace string) (*unifi.ApiClient, error) {
+func (r *IPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1beta2.Instance, namespace string) (*unifi.APIClient, error) {
 	// Get credentials secret
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{
@@ -608,7 +608,7 @@ func (r *IPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1be
 		insecure = *instance.Spec.Insecure
 	}
 
-	return unifi.NewApiClient(unifi.Config{
+	return unifi.NewAPIClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   string(secret.Data["apiKey"]),
 		Site:     site,
