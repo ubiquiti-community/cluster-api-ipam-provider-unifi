@@ -488,7 +488,7 @@ func TestAPIClient_GetOrAllocateIP_NotFoundAllocates(t *testing.T) {
 			c := f.start(t)
 
 			got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
-				"net-1", "02:11:22:33:44:55", "host-1", nil)
+				"net-1", "02:11:22:33:44:55", "", nil)
 			if err != nil {
 				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
 			}
@@ -528,7 +528,7 @@ func TestAPIClient_GetOrAllocateIP_LookupErrorPropagates(t *testing.T) {
 	c := f.start(t)
 
 	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
-		"net-1", "02:11:22:33:44:55", "host-1", nil)
+		"net-1", "02:11:22:33:44:55", "", nil)
 	if err == nil {
 		t.Fatalf("GetOrAllocateIP() returned no error for a failed lookup; got allocation %+v", got)
 	}
@@ -558,7 +558,7 @@ func TestAPIClient_GetOrAllocateIP_ReusesExisting(t *testing.T) {
 	c := f.start(t)
 
 	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
-		"net-1", "02:11:22:33:44:55", "host-1", nil)
+		"net-1", "02:11:22:33:44:55", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
 	}
@@ -595,7 +595,7 @@ func TestAPIClient_GetOrAllocateIP_SeesFixedIPsWithoutNetworkID(t *testing.T) {
 	c := f.start(t)
 
 	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
-		"net-1", "02:11:22:33:44:55", "host-1", nil)
+		"net-1", "02:11:22:33:44:55", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
 	}
@@ -631,7 +631,7 @@ func TestAPIClient_GetOrAllocateIP_MovesKnownClientIntoPool(t *testing.T) {
 			c := f.start(t)
 
 			got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
-				"net-1", "f4:4d:30:6f:a7:93", "host-1", nil)
+				"net-1", "f4:4d:30:6f:a7:93", "", nil)
 			if err != nil {
 				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
 			}
@@ -676,6 +676,19 @@ func TestMACForClaim_Annotated(t *testing.T) {
 		want        string
 		wantErr     bool
 	}{
+		{
+			name:        "uses the neutral annotation, normalized to lower case",
+			annotations: map[string]string{v1beta2.IPAMMACAddressAnnotation: "F4:4D:30:6F:A7:93"},
+			want:        "f4:4d:30:6f:a7:93",
+		},
+		{
+			name: "prefers the neutral annotation over the provider-specific one",
+			annotations: map[string]string{
+				v1beta2.IPAMMACAddressAnnotation: "f4:4d:30:6f:a7:93",
+				v1beta2.MACAddressAnnotation:     "00:11:22:33:44:55",
+			},
+			want: "f4:4d:30:6f:a7:93",
+		},
 		{
 			name:        "uses the provider annotation, normalized to lower case",
 			annotations: map[string]string{v1beta2.MACAddressAnnotation: "F4:4D:30:6F:A7:93"},
@@ -742,11 +755,155 @@ func TestAPIClient_GetOrAllocateIP_SkipsPreAllocatedAddresses(t *testing.T) {
 	pool.Spec.PreAllocations = map[string]string{"other-claim": "192.168.1.2"}
 
 	got, err := c.GetOrAllocateIP(context.Background(), pool, newTestClaim("this-claim", nil),
-		"net-1", "02:11:22:33:44:55", "host-1", nil)
+		"net-1", "02:11:22:33:44:55", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
 	}
 	if got.IPAddress != "192.168.1.3" {
 		t.Errorf("GetOrAllocateIP() = %q, want 192.168.1.3 because 192.168.1.2 is pre-allocated to other-claim", got.IPAddress)
+	}
+}
+
+func testNetworksWithDomain(domain string) []unifi.Network {
+	networks := testNetworks()
+	networks[0].DomainName = new(domain)
+	return networks
+}
+
+func TestHostnameForClaim(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+		wantErr     bool
+	}{
+		{name: "no annotation means unmanaged", annotations: nil, want: ""},
+		{
+			name:        "uses the neutral annotation, normalized to lower case",
+			annotations: map[string]string{v1beta2.IPAMHostnameAnnotation: "Talos-10-1-40-32"},
+			want:        "talos-10-1-40-32",
+		},
+		{
+			name:        "rejects a value that is not a hostname",
+			annotations: map[string]string{v1beta2.IPAMHostnameAnnotation: "not_a_host!"},
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := HostnameForClaim(newTestClaim("c", tt.annotations))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("HostnameForClaim() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("HostnameForClaim() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// writtenRecords returns every record the fake controller was asked to create
+// or update, in order.
+func (f *fakeController) writtenRecords() []unifi.Client {
+	return append(append([]unifi.Client{}, f.created...), f.updated...)
+}
+
+// TestAPIClient_GetOrAllocateIP_ManagesHostname: given a hostname, whichever
+// record UniFi ends up with -- created, rewritten into the pool, or merely
+// reused -- carries it as the display name and as an enabled local DNS record
+// under the network's domain.
+func TestAPIClient_GetOrAllocateIP_ManagesHostname(t *testing.T) {
+	const (
+		mac      = "f4:4d:30:6f:a7:93"
+		hostname = "talos-10-1-40-32"
+	)
+	tests := []struct {
+		name     string
+		existing []unifi.Client
+		wantIP   string
+	}{
+		{
+			name:   "created for an unknown MAC",
+			wantIP: "192.168.1.2",
+		},
+		{
+			name: "written onto a known device moved into the pool",
+			existing: []unifi.Client{{
+				ID: "u1", MAC: mac, FixedIP: "10.1.40.21", UseFixedIP: true, Name: "old-alias",
+			}},
+			wantIP: "192.168.1.2",
+		},
+		{
+			name: "written onto a known device that already holds a pool address",
+			existing: []unifi.Client{{
+				ID: "u1", MAC: mac, FixedIP: "192.168.1.50", UseFixedIP: true, NetworkID: "net-1", Name: "old-alias",
+			}},
+			wantIP: "192.168.1.50",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeController{networks: testNetworksWithDomain("lab.internal"), clients: tt.existing}
+			c := f.start(t)
+
+			got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+				"net-1", mac, hostname, nil)
+			if err != nil {
+				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+			}
+			if got.IPAddress != tt.wantIP {
+				t.Errorf("GetOrAllocateIP() = %q, want %q", got.IPAddress, tt.wantIP)
+			}
+
+			written := f.writtenRecords()
+			if len(written) != 1 {
+				t.Fatalf("expected exactly one record write, got %d: %+v", len(written), written)
+			}
+			rec := written[0]
+			if rec.Name != hostname || rec.LocalDNSRecord != hostname+".lab.internal" || !rec.LocalDNSRecordEnabled {
+				t.Errorf("written record = %+v, want Name %q and an enabled local DNS record %q", rec, hostname, hostname+".lab.internal")
+			}
+		})
+	}
+}
+
+// TestAPIClient_GetOrAllocateIP_HostnameAlreadyApplied: reuse stays a read when
+// the record already carries the hostname and DNS record.
+func TestAPIClient_GetOrAllocateIP_HostnameAlreadyApplied(t *testing.T) {
+	const hostname = "talos-10-1-40-32"
+	f := &fakeController{
+		networks: testNetworksWithDomain("lab.internal"),
+		clients: []unifi.Client{{
+			ID: "u1", MAC: "f4:4d:30:6f:a7:93", FixedIP: "192.168.1.50", UseFixedIP: true, NetworkID: "net-1",
+			Name: hostname, LocalDNSRecord: hostname + ".lab.internal", LocalDNSRecordEnabled: true,
+		}},
+	}
+	c := f.start(t)
+
+	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+		"net-1", "f4:4d:30:6f:a7:93", hostname, nil)
+	if err != nil {
+		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+	}
+	if got.IPAddress != "192.168.1.50" {
+		t.Errorf("GetOrAllocateIP() = %q, want the existing 192.168.1.50", got.IPAddress)
+	}
+	if written := f.writtenRecords(); len(written) != 0 {
+		t.Errorf("expected no writes when the hostname is already applied, got %+v", written)
+	}
+}
+
+// TestAPIClient_GetOrAllocateIP_HostnameWithoutDomain: a network with no domain
+// gets the bare hostname as its DNS record.
+func TestAPIClient_GetOrAllocateIP_HostnameWithoutDomain(t *testing.T) {
+	f := &fakeController{networks: testNetworks()}
+	c := f.start(t)
+
+	if _, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+		"net-1", "02:11:22:33:44:55", "talos-10-1-40-32", nil); err != nil {
+		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+	}
+	if len(f.created) != 1 || f.created[0].LocalDNSRecord != "talos-10-1-40-32" || !f.created[0].LocalDNSRecordEnabled {
+		t.Errorf("created records = %+v, want one with an enabled bare local DNS record talos-10-1-40-32", f.created)
 	}
 }

@@ -184,8 +184,9 @@ metadata:
   name: my-machine-ip
   namespace: default
   annotations:
-    # Optional: the MAC of the machine this address is for.
-    unifi.ipam.cluster.x-k8s.io/mac-address: "f4:4d:30:6f:a7:93"
+    # Optional: the machine this address is for.
+    ipam.cluster.x-k8s.io/mac-address: "f4:4d:30:6f:a7:93"
+    ipam.cluster.x-k8s.io/hostname: "talos-10-1-40-32"
 spec:
   poolRef:
     apiGroup: unifi.ipam.cluster.x-k8s.io
@@ -194,14 +195,22 @@ spec:
 ```
 
 Each allocation is backed by a fixed-IP reservation in the Unifi controller.
-Annotate the claim with the machine's MAC (`unifi.ipam.cluster.x-k8s.io/mac-address`;
-the `capt.tinkerbell.org/mac-address` annotation that
-cluster-api-provider-tinkerbell sets is also recognized) and the reservation is
-made on that device's own client record, so Unifi DHCP hands the machine the same
-address. A device Unifi already knows keeps its reservation if it lies in the
-pool; otherwise a pool address is written onto its existing record. Without an
-annotation the reservation is made on a deterministic, locally administered MAC
-derived from the claim name.
+The two `ipam.cluster.x-k8s.io` annotations are a provider-neutral way for an
+infrastructure provider to describe the machine a claim is for, without knowing
+which IPAM provider serves the pool (cluster-api-provider-tinkerbell sets both).
+
+- **`mac-address`**: the reservation is made on that device's own client record,
+  so Unifi DHCP hands the machine the same address. A device Unifi already knows
+  keeps its reservation if it lies in the pool; otherwise a pool address is
+  written onto its existing record. Without a MAC the reservation is made on a
+  deterministic, locally administered MAC derived from the claim name.
+  `unifi.ipam.cluster.x-k8s.io/mac-address` and `capt.tinkerbell.org/mac-address`
+  are still recognized when the neutral key is absent.
+- **`hostname`**: the client record's display name becomes the hostname and a
+  local DNS record, `<hostname>.<network domain>` (or the bare hostname if the
+  Unifi network has no domain), is enabled for the reserved address. This is
+  applied whether the record is created, rewritten into the pool, or reused.
+  Without the annotation the record's name is left untouched.
 
 ## Architecture
 

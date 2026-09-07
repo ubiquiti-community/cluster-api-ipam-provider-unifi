@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 	"github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/internal/poolutil"
@@ -232,8 +234,13 @@ func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, c
 		return nil, fmt.Errorf("failed to check existing client: %w", err)
 	}
 
+	dnsRecord, err := c.dnsRecordFor(ctx, networkID, hostname)
+	if err != nil {
+		return nil, err
+	}
+
 	if existingClient != nil && clientHoldsPoolAddress(pool, existingClient) {
-		return allocationFromExistingClient(pool, existingClient), nil
+		return c.reuseExisting(ctx, pool, existingClient, hostname, dnsRecord)
 	}
 
 	allocatedIP, prefix, gateway, err := c.allocateNextIP(ctx, pool, claim, macAddress, addressesInUse)
@@ -241,36 +248,101 @@ func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, c
 		return nil, fmt.Errorf("failed to allocate IP: %w", err)
 	}
 
-	var record *unifi.Client
-	if existingClient != nil {
-		existingClient.FixedIP = allocatedIP
-		existingClient.UseFixedIP = true
-		existingClient.NetworkID = networkID
-		record, err = c.api.UpdateClient(ctx, c.site, existingClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to update client %s with fixed IP: %w", macAddress, err)
-		}
-	} else {
-		record, err = c.api.CreateClient(ctx, c.site, &unifi.Client{
-			MAC:        macAddress,
-			FixedIP:    allocatedIP,
-			Hostname:   hostname,
-			UseFixedIP: true,
-			NetworkID:  networkID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create client with fixed IP: %w", err)
-		}
+	record, isNew := reservationRecord(existingClient, claim, macAddress, allocatedIP, networkID, hostname, dnsRecord)
+	written, err := c.writeClient(ctx, record, isNew)
+	if err != nil {
+		return nil, err
 	}
 
 	return &IPAllocation{
-		IPAddress:  record.FixedIP,
-		MacAddress: record.MAC,
-		Hostname:   record.Hostname,
-		UseFixedIP: record.UseFixedIP,
+		IPAddress:  written.FixedIP,
+		MacAddress: written.MAC,
+		Hostname:   written.Hostname,
+		UseFixedIP: written.UseFixedIP,
 		Prefix:     prefix,
 		Gateway:    gateway,
 	}, nil
+}
+
+// reservationRecord returns the record to write for allocatedIP: existingClient
+// with the address on it, or a fresh record when the MAC has none yet. A fresh
+// record's hostname falls back to the claim name when nothing better is known.
+func reservationRecord(existingClient *unifi.Client, claim *ipamv1beta2.IPAddressClaim, macAddress, allocatedIP, networkID, hostname, dnsRecord string) (record *unifi.Client, isNew bool) {
+	record, isNew = existingClient, false
+	if record == nil {
+		record, isNew = &unifi.Client{MAC: macAddress, Hostname: hostname}, true
+		if record.Hostname == "" && claim != nil {
+			record.Hostname = claim.Name
+		}
+	}
+	record.FixedIP = allocatedIP
+	record.UseFixedIP = true
+	record.NetworkID = networkID
+	applyHostname(record, hostname, dnsRecord)
+	return record, isNew
+}
+
+// reuseExisting hands back the pool address existingClient already holds,
+// first writing the hostname onto the record if it isn't there yet.
+func (c *APIClient) reuseExisting(ctx context.Context, pool *v1beta2.IPPool, existingClient *unifi.Client, hostname, dnsRecord string) (*IPAllocation, error) {
+	if !applyHostname(existingClient, hostname, dnsRecord) {
+		return allocationFromExistingClient(pool, existingClient), nil
+	}
+	written, err := c.writeClient(ctx, existingClient, false)
+	if err != nil {
+		return nil, err
+	}
+	return allocationFromExistingClient(pool, written), nil
+}
+
+// writeClient creates record in UniFi, or updates it in place when it is an
+// existing record.
+func (c *APIClient) writeClient(ctx context.Context, record *unifi.Client, isNew bool) (*unifi.Client, error) {
+	if isNew {
+		written, err := c.api.CreateClient(ctx, c.site, record)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create client with fixed IP: %w", err)
+		}
+		return written, nil
+	}
+	written, err := c.api.UpdateClient(ctx, c.site, record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update client %s: %w", record.MAC, err)
+	}
+	return written, nil
+}
+
+// dnsRecordFor returns the local DNS record to publish for hostname on the
+// network: <hostname>.<domain> when the network has a domain, otherwise the
+// bare hostname. An empty hostname yields "" without consulting the controller.
+func (c *APIClient) dnsRecordFor(ctx context.Context, networkID, hostname string) (string, error) {
+	if hostname == "" {
+		return "", nil
+	}
+	network, err := c.GetNetwork(ctx, networkID)
+	if err != nil {
+		return "", err
+	}
+	if domain := DerefString(network.DomainName); domain != "" {
+		return hostname + "." + domain, nil
+	}
+	return hostname, nil
+}
+
+// applyHostname sets hostname as record's display name and dnsRecord as its
+// enabled local DNS record, reporting whether that changed anything. An empty
+// hostname leaves the record untouched, alias included.
+func applyHostname(record *unifi.Client, hostname, dnsRecord string) bool {
+	if hostname == "" {
+		return false
+	}
+	if record.Name == hostname && record.LocalDNSRecord == dnsRecord && record.LocalDNSRecordEnabled {
+		return false
+	}
+	record.Name = hostname
+	record.LocalDNSRecord = dnsRecord
+	record.LocalDNSRecordEnabled = true
+	return true
 }
 
 // clientHoldsPoolAddress reports whether client already has a fixed IP inside
@@ -545,12 +617,28 @@ func subnetContainsAddr(subnet v1beta2.SubnetSpec, addr netip.Addr) bool {
 // claims it creates, carrying the Hardware interface's MAC.
 const captMACAddressAnnotation = "capt.tinkerbell.org/mac-address"
 
+// HostnameForClaim returns the hostname the claim is annotated with, lowercased,
+// or "" when the claim has none. A value that is not a valid hostname is an
+// error rather than silently ignored: it would otherwise become a UniFi client
+// name and DNS record that nothing resolves.
+func HostnameForClaim(claim *ipamv1beta2.IPAddressClaim) (string, error) {
+	raw := claim.Annotations[v1beta2.IPAMHostnameAnnotation]
+	if raw == "" {
+		return "", nil
+	}
+	hostname := strings.ToLower(raw)
+	if errs := validation.IsDNS1123Subdomain(hostname); len(errs) > 0 {
+		return "", fmt.Errorf("annotation %s on claim %s is not a hostname: %s", v1beta2.IPAMHostnameAnnotation, claim.Name, strings.Join(errs, "; "))
+	}
+	return hostname, nil
+}
+
 // MACForClaim returns the MAC the claim's UniFi reservation belongs on: the
 // device's own MAC when the claim is annotated with one, otherwise a
 // deterministic locally administered MAC derived from the claim name so the
 // reservation still has a stable owner that cannot collide with another claim's.
 func MACForClaim(claim *ipamv1beta2.IPAddressClaim) (string, error) {
-	for _, key := range []string{v1beta2.MACAddressAnnotation, captMACAddressAnnotation} {
+	for _, key := range []string{v1beta2.IPAMMACAddressAnnotation, v1beta2.MACAddressAnnotation, captMACAddressAnnotation} {
 		raw := claim.Annotations[key]
 		if raw == "" {
 			continue

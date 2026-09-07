@@ -251,6 +251,10 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 	if err != nil {
 		return nil, err
 	}
+	hostname, err := unifi.HostnameForClaim(h.claim)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use network ID from pool (either configured or discovered)
 	networkID := h.pool.Spec.NetworkID //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
@@ -267,7 +271,7 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 		h.claim,
 		networkID,
 		macAddress,
-		h.claim.Name,
+		hostname,
 		addressesInUse,
 	)
 	if err != nil {
@@ -291,6 +295,7 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 		"claim", h.claim.Name,
 		"address", allocation.IPAddress,
 		"mac", macAddress,
+		"hostname", hostname,
 		"prefix", allocation.Prefix,
 		"gateway", allocation.Gateway)
 
