@@ -258,13 +258,17 @@ func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPo
 		}, nil
 	}
 
-	// If not found or error (other than NotFoundError), need to allocate new IP.
-	if err != nil {
-		// Check if it's a NotFoundError - that's expected, other errors should be returned.
-		notFoundError := &unifi.NotFoundError{}
-		if errors.As(err, &notFoundError) {
-			return nil, fmt.Errorf("failed to check existing client: %w", err)
-		}
+	// A NotFoundError means this MAC simply has no assignment yet -- the normal
+	// first-allocation case -- so fall through and allocate. Any other error
+	// (auth, transport) says nothing about whether the MAC is assigned, so it
+	// must be propagated rather than mistaken for "unassigned": allocating on
+	// top of an unread assignment would hand out an IP that is already taken.
+	//
+	// errors.As, not errors.Is: NotFoundError carries fields and has no Is
+	// method, so it is matched by type, and it may arrive wrapped.
+	notFoundError := &unifi.NotFoundError{}
+	if err != nil && !errors.As(err, &notFoundError) {
+		return nil, fmt.Errorf("failed to check existing client: %w", err)
 	}
 
 	// Get the network configuration.

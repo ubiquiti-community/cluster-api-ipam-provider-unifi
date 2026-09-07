@@ -18,12 +18,16 @@ package unifi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
+
+	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
 )
 
 func TestNewApiClient(t *testing.T) {
@@ -349,5 +353,211 @@ func TestApiClient_ReleaseIP(t *testing.T) {
 				t.Errorf("ApiClient.ReleaseIP() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// fakeController is a stand-in UniFi controller serving the handful of REST
+// endpoints GetOrAllocateIP touches, so the real go-unifi client (and its real
+// error types) sit between the test and the code under test.
+type fakeController struct {
+	// clients is what GET rest/user returns.
+	clients []unifi.Client
+	// networks is what GET rest/networkconf returns.
+	networks []unifi.Network
+	// clientGetFailures makes the first N GETs of rest/user answer with
+	// clientGetStatus, so a lookup can fail while later calls succeed.
+	clientGetFailures int
+	clientGetStatus   int
+
+	clientGets int
+	created    []unifi.Client
+}
+
+func (f *fakeController) start(t *testing.T) *ApiClient {
+	t.Helper()
+
+	const base = "/proxy/network/api/s/default/rest/"
+	mux := http.NewServeMux()
+	mux.HandleFunc(base+"user", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			f.clientGets++
+			if f.clientGets <= f.clientGetFailures {
+				w.WriteHeader(f.clientGetStatus)
+				return
+			}
+			writeUnifiData(t, w, f.clients)
+		case http.MethodPost:
+			var created unifi.Client
+			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+				t.Errorf("fake controller could not decode create body: %v", err)
+			}
+			f.created = append(f.created, created)
+			writeUnifiData(t, w, []unifi.Client{created})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc(base+"networkconf", func(w http.ResponseWriter, _ *http.Request) {
+		writeUnifiData(t, w, f.networks)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := NewApiClient(Config{Host: srv.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("NewApiClient() unexpected error = %v", err)
+	}
+	return c
+}
+
+func writeUnifiData[T any](t *testing.T, w http.ResponseWriter, data []T) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(struct {
+		Meta struct {
+			RC string `json:"rc"`
+		} `json:"meta"`
+		Data []T `json:"data"`
+	}{
+		Meta: struct {
+			RC string `json:"rc"`
+		}{RC: "ok"},
+		Data: data,
+	}); err != nil {
+		t.Errorf("fake controller could not encode response: %v", err)
+	}
+}
+
+func testPool() *v1beta2.UnifiIPPool {
+	return &v1beta2.UnifiIPPool{
+		Spec: v1beta2.UnifiIPPoolSpec{
+			Subnets: []v1beta2.SubnetSpec{{CIDR: "192.168.1.0/24"}},
+			Gateway: "192.168.1.1",
+		},
+	}
+}
+
+func testNetworks() []unifi.Network {
+	return []unifi.Network{{
+		ID: "net-1",
+		// Purpose drives Network's custom marshaller; without a valid one the
+		// fake controller cannot even encode the network.
+		Purpose:  unifi.PurposeCorporate,
+		IPSubnet: new("192.168.1.0/24"),
+	}}
+}
+
+// TestApiClient_GetOrAllocateIP_NotFoundAllocates covers the normal
+// first-allocation case. go-unifi reports "this MAC has no assignment" by
+// returning *unifi.NotFoundError from GetClientByMAC -- which is not a failure,
+// it is the signal to allocate.
+func TestApiClient_GetOrAllocateIP_NotFoundAllocates(t *testing.T) {
+	tests := []struct {
+		name    string
+		clients []unifi.Client
+	}{
+		// GetClientByMAC returns NotFoundError for both of these.
+		{name: "no clients at all", clients: nil},
+		{
+			name:    "clients exist but none match the MAC",
+			clients: []unifi.Client{{MAC: "02:aa:bb:cc:dd:ee", FixedIP: "192.168.1.9"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeController{clients: tt.clients, networks: testNetworks()}
+			c := f.start(t)
+
+			got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+				"net-1", "02:11:22:33:44:55", "host-1", nil)
+			if err != nil {
+				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+			}
+			if got == nil {
+				t.Fatal("GetOrAllocateIP() returned no allocation")
+			}
+			if got.IPAddress == "" {
+				t.Error("GetOrAllocateIP() allocated an empty IP address")
+			}
+			if got.IPAddress == "192.168.1.1" {
+				t.Error("GetOrAllocateIP() allocated the gateway address")
+			}
+			if got.MacAddress != "02:11:22:33:44:55" {
+				t.Errorf("GetOrAllocateIP() MacAddress = %q, want the requested MAC", got.MacAddress)
+			}
+			if len(f.created) != 1 {
+				t.Fatalf("expected exactly one client to be created, got %d", len(f.created))
+			}
+			if !f.created[0].UseFixedIP || f.created[0].FixedIP != got.IPAddress {
+				t.Errorf("created client = %+v, want UseFixedIP with FixedIP %q", f.created[0], got.IPAddress)
+			}
+		})
+	}
+}
+
+// TestApiClient_GetOrAllocateIP_LookupErrorPropagates covers the opposite case:
+// a genuine failure looking the MAC up says nothing about whether the MAC is
+// assigned, so it must not be mistaken for "unassigned" and must not allocate.
+// Only the first lookup fails here, so a caller that ignores the error would
+// sail on and allocate successfully.
+func TestApiClient_GetOrAllocateIP_LookupErrorPropagates(t *testing.T) {
+	f := &fakeController{
+		networks:          testNetworks(),
+		clientGetFailures: 1,
+		clientGetStatus:   http.StatusUnauthorized,
+	}
+	c := f.start(t)
+
+	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+		"net-1", "02:11:22:33:44:55", "host-1", nil)
+	if err == nil {
+		t.Fatalf("GetOrAllocateIP() returned no error for a failed lookup; got allocation %+v", got)
+	}
+
+	loginRequired := &unifi.LoginRequiredError{}
+	if !errors.As(err, &loginRequired) {
+		t.Errorf("GetOrAllocateIP() error = %v, want it to wrap *unifi.LoginRequiredError", err)
+	}
+	if len(f.created) != 0 {
+		t.Errorf("expected no client to be created on a failed lookup, got %d", len(f.created))
+	}
+}
+
+// TestApiClient_GetOrAllocateIP_ReusesExisting guards the path that already
+// worked: a MAC with an assignment gets that assignment back, with no write.
+func TestApiClient_GetOrAllocateIP_ReusesExisting(t *testing.T) {
+	f := &fakeController{
+		networks: testNetworks(),
+		clients: []unifi.Client{{
+			MAC:        "02:11:22:33:44:55",
+			FixedIP:    "192.168.1.50",
+			Hostname:   "existing-host",
+			UseFixedIP: true,
+			NetworkID:  "net-1",
+		}},
+	}
+	c := f.start(t)
+
+	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+		"net-1", "02:11:22:33:44:55", "host-1", nil)
+	if err != nil {
+		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+	}
+	want := &IPAllocation{
+		IPAddress:  "192.168.1.50",
+		MacAddress: "02:11:22:33:44:55",
+		Hostname:   "existing-host",
+		UseFixedIP: true,
+		Prefix:     24,
+		Gateway:    "192.168.1.1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetOrAllocateIP() = %+v, want %+v", got, want)
+	}
+	if len(f.created) != 0 {
+		t.Errorf("expected no client to be created when reusing, got %d", len(f.created))
 	}
 }
