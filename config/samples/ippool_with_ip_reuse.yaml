@@ -1,7 +1,7 @@
 ---
 # Example IPPool with IP reuse capability
 # This demonstrates the IP reuse feature for stable IP assignments across machine recreation
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
 kind: IPPool
 metadata:
   name: cluster-pool-with-reuse
@@ -45,7 +45,7 @@ spec:
 
 ---
 # Example IPPool using IP range notation instead of CIDR
-apiVersion: ipam.cluster.x-k8s.io/v1beta2
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
 kind: IPPool
 metadata:
   name: cluster-pool-range

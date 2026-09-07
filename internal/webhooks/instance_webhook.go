@@ -48,7 +48,7 @@ func (w *Instance) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/mutate-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=true,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=default.instance.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-unifi-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=true,failurePolicy=fail,groups=unifi.ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=default.instance.unifi.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // Default implements admission.Defaulter.
 func (w *Instance) Default(_ context.Context, instance *v1beta2.Instance) error {
@@ -61,7 +61,7 @@ func (w *Instance) Default(_ context.Context, instance *v1beta2.Instance) error 
 	return nil
 }
 
-// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=false,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=validation.instance.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-unifi-ipam-cluster-x-k8s-io-v1beta2-instance,mutating=false,failurePolicy=fail,groups=unifi.ipam.cluster.x-k8s.io,resources=instances,versions=v1beta2,name=validation.instance.unifi.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // ValidateCreate implements admission.Validator.
 func (w *Instance) ValidateCreate(ctx context.Context, instance *v1beta2.Instance) (admission.Warnings, error) {

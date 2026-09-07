@@ -30,13 +30,17 @@ import (
 	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
-// The pool kind is compared as a plain string in three places that the compiler
-// cannot check for us: the claim mapper, the pool controller's IPAddress mapper,
-// and every ListAddressesInUse call. A rename that misses one of them keeps
-// compiling and silently stops matching, so these tests pin the served kind name
-// behaviourally: the new kind is honored, the old one is not.
+// The pool kind and API group are compared as plain strings in three places the
+// compiler cannot check for us: the claim mapper, the pool controller's
+// IPAddress mapper, and every ListAddressesInUse call. A rename that misses one
+// of them keeps compiling and silently stops matching, so these tests pin the
+// served kind and group behaviorally: the new pair is honored, the pre-rename
+// kind and the pre-move group are not.
 
-const legacyPoolKind = "UnifiIPPool"
+const (
+	legacyPoolKind  = "UnifiIPPool"
+	legacyPoolGroup = "ipam.cluster.x-k8s.io"
+)
 
 func kindTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -52,13 +56,17 @@ func kindTestScheme(t *testing.T) *runtime.Scheme {
 }
 
 func claimReferencing(name, kind string) *ipamv1beta2.IPAddressClaim {
+	return claimReferencingGroup(name, kind, v1beta2.GroupVersion.Group)
+}
+
+func claimReferencingGroup(name, kind, apiGroup string) *ipamv1beta2.IPAddressClaim {
 	return &ipamv1beta2.IPAddressClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"},
 		Spec: ipamv1beta2.IPAddressClaimSpec{
 			PoolRef: ipamv1beta2.IPPoolReference{
 				Name:     "test-pool",
 				Kind:     kind,
-				APIGroup: v1beta2.GroupVersion.Group,
+				APIGroup: apiGroup,
 			},
 		},
 	}
@@ -82,13 +90,16 @@ func addressReferencing(name, kind string) *ipamv1beta2.IPAddress {
 }
 
 // TestProviderAdapter_ipPoolToIPClaims_MatchesServedKind pins the claim-mapping
-// path: a claim whose poolRef.kind is the served kind is enqueued, and one
-// carrying the pre-rename kind is not.
+// path: a claim whose poolRef names the served kind in the served group is
+// enqueued. A claim carrying the pre-rename kind is not, and neither is one that
+// names the right kind in Cluster API's own group -- IPPool in
+// ipam.cluster.x-k8s.io is somebody else's type, not ours.
 func TestProviderAdapter_ipPoolToIPClaims_MatchesServedKind(t *testing.T) {
 	scheme := kindTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		claimReferencing("current-claim", v1beta2.IPPoolKind),
-		claimReferencing("legacy-claim", legacyPoolKind),
+		claimReferencing("legacy-kind-claim", legacyPoolKind),
+		claimReferencingGroup("legacy-group-claim", v1beta2.IPPoolKind, legacyPoolGroup),
 	).Build()
 
 	adapter := &UnifiProviderAdapter{Client: c}

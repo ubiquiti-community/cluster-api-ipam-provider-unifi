@@ -55,7 +55,7 @@ func (w *IPPool) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/mutate-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=true,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=default.ippool.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-unifi-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=true,failurePolicy=fail,groups=unifi.ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=default.ippool.unifi.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // Default implements admission.Defaulter.
 func (w *IPPool) Default(_ context.Context, pool *v1beta2.IPPool) error {
@@ -67,7 +67,7 @@ func (w *IPPool) Default(_ context.Context, pool *v1beta2.IPPool) error {
 	return nil
 }
 
-// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=false,failurePolicy=fail,groups=ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=validation.ippool.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update;delete,path=/validate-unifi-ipam-cluster-x-k8s-io-v1beta2-ippool,mutating=false,failurePolicy=fail,groups=unifi.ipam.cluster.x-k8s.io,resources=ippools,versions=v1beta2,name=validation.ippool.unifi.ipam.cluster.x-k8s.io,matchPolicy=Equivalent,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
 // ValidateCreate implements admission.Validator.
 func (w *IPPool) ValidateCreate(ctx context.Context, pool *v1beta2.IPPool) (admission.Warnings, error) {

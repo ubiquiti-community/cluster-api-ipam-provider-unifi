@@ -1,6 +1,6 @@
 resources:
-  - bases/ipam.cluster.x-k8s.io_instances.yaml
-  - bases/ipam.cluster.x-k8s.io_ippools.yaml
+  - bases/unifi.ipam.cluster.x-k8s.io_instances.yaml
+  - bases/unifi.ipam.cluster.x-k8s.io_ippools.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # Labels to declare contract version compatibility

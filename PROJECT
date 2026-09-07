@@ -13,7 +13,7 @@ resources:
       namespaced: true
     controller: true
     domain: cluster.x-k8s.io
-    group: ipam
+    group: unifi.ipam
     kind: Instance
     path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
     version: v1beta2
@@ -22,7 +22,7 @@ resources:
       namespaced: true
     controller: true
     domain: cluster.x-k8s.io
-    group: ipam
+    group: unifi.ipam
     kind: IPPool
     path: github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2
     version: v1beta2

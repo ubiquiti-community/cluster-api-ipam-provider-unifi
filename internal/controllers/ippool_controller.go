@@ -62,9 +62,9 @@ type IPPoolReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ippools,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ippools/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ippools/finalizers,verbs=update
+// +kubebuilder:rbac:groups=unifi.ipam.cluster.x-k8s.io,resources=ippools,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=unifi.ipam.cluster.x-k8s.io,resources=ippools/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=unifi.ipam.cluster.x-k8s.io,resources=ippools/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddresses,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to

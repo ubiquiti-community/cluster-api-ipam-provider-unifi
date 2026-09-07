@@ -1,0 +1,63 @@
+---
+# A complete, self-contained scenario: a namespace, a Unifi controller
+# connection, a pool that allocates from it, and a Cluster API claim against
+# that pool.
+#
+# Note the group boundary. Instance and IPPool are this provider's own kinds and
+# live in unifi.ipam.cluster.x-k8s.io; IPAddressClaim is Cluster API's contract
+# type and stays in ipam.cluster.x-k8s.io. The claim crosses the boundary
+# through poolRef.apiGroup.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ipam-example
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unifi-credentials
+  namespace: ipam-example
+type: Opaque
+stringData:
+  # Replace with an API key minted in the Unifi controller.
+  apiKey: replace-me
+---
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: Instance
+metadata:
+  name: unifi-controller
+  namespace: ipam-example
+spec:
+  host: "https://unifi.example.com:8443"
+  credentialsRef:
+    name: unifi-credentials
+  site: default
+  insecure: false
+---
+apiVersion: unifi.ipam.cluster.x-k8s.io/v1beta2
+kind: IPPool
+metadata:
+  name: pool1
+  namespace: ipam-example
+spec:
+  instanceRef:
+    name: unifi-controller
+    namespace: ipam-example
+  # networkId is optional: the pool discovers the Unifi network whose range
+  # contains the configured subnet when it is left unset.
+  subnets:
+    - start: "192.168.0.10"
+      end: "192.168.0.50"
+      prefix: 24
+      gateway: "192.168.0.1"
+---
+apiVersion: ipam.cluster.x-k8s.io/v1beta2
+kind: IPAddressClaim
+metadata:
+  name: provisioning-pool
+  namespace: ipam-example
+spec:
+  poolRef:
+    apiGroup: unifi.ipam.cluster.x-k8s.io
+    kind: IPPool
+    name: pool1

@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1beta2 contains API Schema definitions for the ipam v1beta2 API group
+// Package v1beta2 contains API Schema definitions for the unifi ipam v1beta2 API group
 // +kubebuilder:object:generate=true
-// +groupName=ipam.cluster.x-k8s.io
+// +groupName=unifi.ipam.cluster.x-k8s.io
 package v1beta2
 
 import (
@@ -27,7 +27,7 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects.
-	GroupVersion = schema.GroupVersion{Group: "ipam.cluster.x-k8s.io", Version: "v1beta2"}
+	GroupVersion = schema.GroupVersion{Group: "unifi.ipam.cluster.x-k8s.io", Version: "v1beta2"}
 
 	// schemeBuilder is used to add go types to the GroupVersionKind scheme.
 	schemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
