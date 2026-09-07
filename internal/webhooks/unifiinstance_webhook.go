@@ -22,7 +22,6 @@ import (
 	"net/url"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,10 +38,11 @@ type UnifiInstanceWebhook struct {
 // SetupWebhookWithManager registers the webhook with the controller manager.
 func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
-	// The builder is instantiated at runtime.Object rather than at
-	// *v1beta2.UnifiInstance because Default and the Validate* methods below take
-	// runtime.Object and assert the concrete type themselves.
-	return ctrl.NewWebhookManagedBy[runtime.Object](mgr, &v1beta2.UnifiInstance{}).
+	// Instantiated at the concrete type: the generic handlers build the object
+	// they decode into with reflect.New on T, so T must be a pointer type. An
+	// interface T (runtime.Object) registers fine and then panics on every
+	// request.
+	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.UnifiInstance{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
@@ -50,13 +50,8 @@ func (w *UnifiInstanceWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:webhook:path=/mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance,mutating=true,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiinstances,verbs=create;update,versions=v1alpha1,name=munifiinstance.kb.io,admissionReviewVersions=v1
 
-// Default implements webhook.Defaulter.
-func (w *UnifiInstanceWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	instance, ok := obj.(*v1beta2.UnifiInstance)
-	if !ok {
-		return fmt.Errorf("expected UnifiInstance, got %T", obj)
-	}
-
+// Default implements admission.Defaulter.
+func (w *UnifiInstanceWebhook) Default(_ context.Context, instance *v1beta2.UnifiInstance) error {
 	// Set default site if not specified.
 	if instance.Spec.Site == nil || *instance.Spec.Site == "" {
 		defaultSite := "default"
@@ -68,38 +63,18 @@ func (w *UnifiInstanceWebhook) Default(ctx context.Context, obj runtime.Object) 
 
 // +kubebuilder:webhook:path=/validate-ipam-cluster-x-k8s-io-v1alpha1-unifiinstance,mutating=false,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiinstances,verbs=create;update;delete,versions=v1alpha1,name=vunifiinstance.kb.io,admissionReviewVersions=v1
 
-// ValidateCreate implements webhook.CustomValidator.
-func (w *UnifiInstanceWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	instance, ok := obj.(*v1beta2.UnifiInstance)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiInstance, got %T", obj)
-	}
-
+// ValidateCreate implements admission.Validator.
+func (w *UnifiInstanceWebhook) ValidateCreate(ctx context.Context, instance *v1beta2.UnifiInstance) (admission.Warnings, error) {
 	return nil, w.validate(ctx, instance)
 }
 
-// ValidateUpdate implements webhook.CustomValidator.
-func (w *UnifiInstanceWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	_, ok := oldObj.(*v1beta2.UnifiInstance)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiInstance, got %T", oldObj)
-	}
-
-	newInstance, ok := newObj.(*v1beta2.UnifiInstance)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiInstance, got %T", newObj)
-	}
-
+// ValidateUpdate implements admission.Validator.
+func (w *UnifiInstanceWebhook) ValidateUpdate(ctx context.Context, _, newInstance *v1beta2.UnifiInstance) (admission.Warnings, error) {
 	return nil, w.validate(ctx, newInstance)
 }
 
-// ValidateDelete implements webhook.CustomValidator.
-func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	instance, ok := obj.(*v1beta2.UnifiInstance)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiInstance, got %T", obj)
-	}
-
+// ValidateDelete implements admission.Validator.
+func (w *UnifiInstanceWebhook) ValidateDelete(ctx context.Context, instance *v1beta2.UnifiInstance) (admission.Warnings, error) {
 	// Allow deletion if skip annotation is set.
 	if _, ok := instance.Annotations[skipValidateDeleteWebhookAnnotation]; ok {
 		return nil, nil

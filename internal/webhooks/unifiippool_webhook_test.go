@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,7 +61,7 @@ func TestUnifiIPPoolWebhook_Default(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string
@@ -89,7 +88,7 @@ func TestUnifiIPPoolWebhook_ValidateCreate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string
@@ -122,8 +121,8 @@ func TestUnifiIPPoolWebhook_ValidateUpdate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		oldObj runtime.Object
-		newObj runtime.Object
+		oldObj *v1beta2.UnifiIPPool
+		newObj *v1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string
@@ -156,7 +155,7 @@ func TestUnifiIPPoolWebhook_ValidateDelete(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiIPPool
 	}
 	tests := []struct {
 		name    string

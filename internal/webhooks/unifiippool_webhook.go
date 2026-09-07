@@ -22,7 +22,6 @@ import (
 	"net/netip"
 
 	"go4.org/netipx"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,10 +45,11 @@ type UnifiIPPoolWebhook struct {
 // SetupWebhookWithManager registers the webhook with the controller manager.
 func (w *UnifiIPPoolWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w.Client = mgr.GetClient()
-	// The builder is instantiated at runtime.Object rather than at
-	// *v1beta2.UnifiIPPool because Default and the Validate* methods below take
-	// runtime.Object and assert the concrete type themselves.
-	return ctrl.NewWebhookManagedBy[runtime.Object](mgr, &v1beta2.UnifiIPPool{}).
+	// Instantiated at the concrete type: the generic handlers build the object
+	// they decode into with reflect.New on T, so T must be a pointer type. An
+	// interface T (runtime.Object) registers fine and then panics on every
+	// request.
+	return ctrl.NewWebhookManagedBy(mgr, &v1beta2.UnifiIPPool{}).
 		WithValidator(w).
 		WithDefaulter(w).
 		Complete()
@@ -57,13 +57,8 @@ func (w *UnifiIPPoolWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:webhook:path=/mutate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool,mutating=true,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiippools,verbs=create;update,versions=v1alpha1,name=munifiippool.kb.io,admissionReviewVersions=v1
 
-// Default implements webhook.Defaulter.
-func (w *UnifiIPPoolWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	pool, ok := obj.(*v1beta2.UnifiIPPool)
-	if !ok {
-		return fmt.Errorf("expected UnifiIPPool, got %T", obj)
-	}
-
+// Default implements admission.Defaulter.
+func (w *UnifiIPPoolWebhook) Default(_ context.Context, pool *v1beta2.UnifiIPPool) error {
 	// Set default namespace for InstanceRef if not specified.
 	if pool.Spec.InstanceRef.Namespace == "" {
 		pool.Spec.InstanceRef.Namespace = pool.Namespace
@@ -74,28 +69,13 @@ func (w *UnifiIPPoolWebhook) Default(ctx context.Context, obj runtime.Object) er
 
 // +kubebuilder:webhook:path=/validate-ipam-cluster-x-k8s-io-v1alpha1-unifiippool,mutating=false,failurePolicy=fail,sideEffects=None,groups=ipam.cluster.x-k8s.io,resources=unifiippools,verbs=create;update;delete,versions=v1alpha1,name=vunifiippool.kb.io,admissionReviewVersions=v1
 
-// ValidateCreate implements webhook.CustomValidator.
-func (w *UnifiIPPoolWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	pool, ok := obj.(*v1beta2.UnifiIPPool)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiIPPool, got %T", obj)
-	}
-
+// ValidateCreate implements admission.Validator.
+func (w *UnifiIPPoolWebhook) ValidateCreate(ctx context.Context, pool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
 	return nil, w.validate(ctx, pool)
 }
 
-// ValidateUpdate implements webhook.CustomValidator.
-func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	oldPool, ok := oldObj.(*v1beta2.UnifiIPPool)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiIPPool, got %T", oldObj)
-	}
-
-	newPool, ok := newObj.(*v1beta2.UnifiIPPool)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiIPPool, got %T", newObj)
-	}
-
+// ValidateUpdate implements admission.Validator.
+func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldPool, newPool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
 	// Validate the new pool.
 	if err := w.validate(ctx, newPool); err != nil {
 		return nil, err
@@ -105,13 +85,8 @@ func (w *UnifiIPPoolWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	return nil, w.validateUpdate(ctx, oldPool, newPool)
 }
 
-// ValidateDelete implements webhook.CustomValidator.
-func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	pool, ok := obj.(*v1beta2.UnifiIPPool)
-	if !ok {
-		return nil, fmt.Errorf("expected UnifiIPPool, got %T", obj)
-	}
-
+// ValidateDelete implements admission.Validator.
+func (w *UnifiIPPoolWebhook) ValidateDelete(ctx context.Context, pool *v1beta2.UnifiIPPool) (admission.Warnings, error) {
 	// Allow deletion if skip annotation is set.
 	if _, ok := pool.Annotations[skipValidateDeleteWebhookAnnotation]; ok {
 		return nil, nil

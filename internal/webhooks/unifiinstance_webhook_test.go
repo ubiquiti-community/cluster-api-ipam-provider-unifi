@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -61,7 +60,7 @@ func TestUnifiInstanceWebhook_Default(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiInstance
 	}
 	tests := []struct {
 		name    string
@@ -88,7 +87,7 @@ func TestUnifiInstanceWebhook_ValidateCreate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiInstance
 	}
 	tests := []struct {
 		name    string
@@ -121,8 +120,8 @@ func TestUnifiInstanceWebhook_ValidateUpdate(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		oldObj runtime.Object
-		newObj runtime.Object
+		oldObj *v1beta2.UnifiInstance
+		newObj *v1beta2.UnifiInstance
 	}
 	tests := []struct {
 		name    string
@@ -155,7 +154,7 @@ func TestUnifiInstanceWebhook_ValidateDelete(t *testing.T) {
 		Client client.Client
 	}
 	type args struct {
-		obj runtime.Object
+		obj *v1beta2.UnifiInstance
 	}
 	tests := []struct {
 		name    string
