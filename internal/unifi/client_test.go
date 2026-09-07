@@ -730,3 +730,23 @@ func TestMACForClaim_DerivesWhenUnannotated(t *testing.T) {
 		t.Errorf("MACForClaim() = %q is not a valid MAC: %v", a, err)
 	}
 }
+
+// TestAPIClient_GetOrAllocateIP_SkipsPreAllocatedAddresses: an address reserved
+// in spec.preAllocations for one claim must not be handed to another claim by
+// dynamic allocation, whether or not the owning claim exists yet.
+func TestAPIClient_GetOrAllocateIP_SkipsPreAllocatedAddresses(t *testing.T) {
+	f := &fakeController{networks: testNetworks()}
+	c := f.start(t)
+
+	pool := testPool()
+	pool.Spec.PreAllocations = map[string]string{"other-claim": "192.168.1.2"}
+
+	got, err := c.GetOrAllocateIP(context.Background(), pool, newTestClaim("this-claim", nil),
+		"net-1", "02:11:22:33:44:55", "host-1", nil)
+	if err != nil {
+		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+	}
+	if got.IPAddress != "192.168.1.3" {
+		t.Errorf("GetOrAllocateIP() = %q, want 192.168.1.3 because 192.168.1.2 is pre-allocated to other-claim", got.IPAddress)
+	}
+}

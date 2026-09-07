@@ -365,11 +365,16 @@ func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IP
 }
 
 // allocateDynamic picks the first free IP across pool's subnets, skipping each
-// subnet's gateway and any IP already recorded in-use by CAPI or Unifi.
+// subnet's gateway, any IP already recorded in-use by CAPI or Unifi, and any IP
+// pre-allocated to a claim (which is spoken for whether that claim exists yet or
+// not).
 func (c *APIClient) allocateDynamic(ctx context.Context, pool *v1beta2.IPPool, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (string, int32, string, error) {
-	allocatedIPs := make(map[string]bool, len(addressesInUse))
+	allocatedIPs := make(map[string]bool, len(addressesInUse)+len(pool.Spec.PreAllocations))
 	for _, addr := range addressesInUse {
 		allocatedIPs[addr.Spec.Address] = true
+	}
+	for _, prealloc := range pool.Spec.PreAllocations {
+		allocatedIPs[prealloc] = true
 	}
 
 	staticAssignments, err := c.GetStaticAssignments(ctx)
