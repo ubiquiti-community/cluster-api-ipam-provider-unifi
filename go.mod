@@ -7,9 +7,9 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/ubiquiti-community/go-unifi v1.34.0
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	k8s.io/api v0.36.4
+	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
-	k8s.io/client-go v0.36.4
+	k8s.io/client-go v0.37.0
 	sigs.k8s.io/cluster-api v1.13.4
 	sigs.k8s.io/controller-runtime v0.24.1
 )
