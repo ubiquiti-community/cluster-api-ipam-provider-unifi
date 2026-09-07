@@ -19,12 +19,9 @@ package unifi
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/netip"
-	"time"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
 
@@ -36,11 +33,10 @@ import (
 
 // Config holds the configuration for connecting to a Unifi controller.
 type Config struct {
-	Host       string
-	APIKey     string
-	Site       string
-	Insecure   bool
-	HTTPClient *http.Client
+	Host     string
+	APIKey   string
+	Site     string
+	Insecure bool
 }
 
 // Client wraps the Unifi API client with IPAM-specific operations.
@@ -59,43 +55,29 @@ type IPAllocation struct {
 	Gateway    string
 }
 
+// defaultTimeoutSeconds is the per-request timeout handed to go-unifi. It
+// matches the timeout this package used to set on its own *http.Client.
+const defaultTimeoutSeconds = 30
+
 // NewClient creates a new Unifi client.
 func NewClient(cfg Config) (*Client, error) {
 	if cfg.Site == "" {
 		cfg.Site = "default"
 	}
 
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: cfg.Insecure, //nolint:gosec // G402: User-configurable for development/testing environments
-				},
-			},
-		}
-	}
-
-	// Create the client.
-	client := &unifi.Client{}
-
-	// Set API key (required for authentication).
-	client.SetAPIKey(cfg.APIKey)
-
-	// Configure HTTP client.
-	if err := client.SetHTTPClient(httpClient); err != nil {
-		return nil, fmt.Errorf("failed to set HTTP client: %w", err)
-	}
-
-	// Set base URL.
-	if err := client.SetBaseURL(cfg.Host); err != nil {
-		return nil, fmt.Errorf("failed to set base URL: %w", err)
-	}
-
-	// Login to the controller (with API key, no user/pass needed).
-	if err := client.Login(context.Background(), "", ""); err != nil {
-		return nil, fmt.Errorf("failed to login to Unifi controller: %w", err)
+	// go-unifi owns its transport: unifi.New builds a retrying HTTP client with
+	// a cookie jar, applies InsecureSkipVerify when AllowInsecure is set, works
+	// out the controller's API URL style and, for user/password auth, logs in.
+	// With an API key there is no login step.
+	timeoutSeconds := defaultTimeoutSeconds
+	client, err := unifi.New(context.Background(), &unifi.Config{
+		BaseURL:        cfg.Host,
+		APIKey:         cfg.APIKey,
+		AllowInsecure:  cfg.Insecure,
+		TimeoutSeconds: &timeoutSeconds,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Unifi client: %w", err)
 	}
 
 	return &Client{
@@ -140,21 +122,28 @@ func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1be
 		return nil, err
 	}
 
+	// go-unifi models these optional network settings as *string, where both a
+	// nil pointer and a pointer to "" mean "not configured".
+	ipSubnet := DerefString(network.IPSubnet)
+	dhcpdGateway := DerefString(network.DHCPDGateway)
+	dhcpdStart := DerefString(network.DHCPDStart)
+	dhcpdStop := DerefString(network.DHCPDStop)
+
 	// Validate that the network has required DHCP/IP configuration
-	if network.IPSubnet == "" {
+	if ipSubnet == "" {
 		return nil, fmt.Errorf("network %s has no IP subnet configured", networkID)
 	}
 
 	subnetSpec := &v1beta2.SubnetSpec{
-		CIDR: network.IPSubnet,
+		CIDR: ipSubnet,
 	}
 
 	// Extract gateway - prefer DHCPDGateway if set, otherwise calculate from CIDR
-	if network.DHCPDGateway != "" && network.DHCPDGatewayEnabled {
-		subnetSpec.Gateway = network.DHCPDGateway
+	if dhcpdGateway != "" && network.DHCPDGatewayEnabled {
+		subnetSpec.Gateway = dhcpdGateway
 	} else {
 		// Calculate gateway from CIDR (typically .1 of the subnet)
-		gateway, err := calculateGatewayFromCIDR(network.IPSubnet)
+		gateway, err := calculateGatewayFromCIDR(ipSubnet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate gateway: %w", err)
 		}
@@ -162,7 +151,7 @@ func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1be
 	}
 
 	// Calculate prefix from CIDR
-	prefix, err := extractPrefixFromCIDR(network.IPSubnet)
+	prefix, err := extractPrefixFromCIDR(ipSubnet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract prefix: %w", err)
 	}
@@ -172,9 +161,9 @@ func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1be
 	excludeRanges := make([]string, 0)
 
 	// If DHCP is enabled, exclude IPs outside the DHCP range
-	if network.DHCPDEnabled && network.DHCPDStart != "" && network.DHCPDStop != "" {
+	if network.DHCPDEnabled && dhcpdStart != "" && dhcpdStop != "" {
 		// Calculate exclude ranges for IPs before DHCP start and after DHCP stop
-		beforeRange, afterRange, err := calculateExcludeRangesFromDHCP(network.IPSubnet, network.DHCPDStart, network.DHCPDStop)
+		beforeRange, afterRange, err := calculateExcludeRangesFromDHCP(ipSubnet, dhcpdStart, dhcpdStop)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate exclude ranges: %w", err)
 		}
@@ -274,7 +263,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 	}
 
 	// Create a User object with fixed IP assignment.
-	newUser := &unifi.User{
+	newUser := &unifi.Client{
 		MAC:        macAddress,
 		FixedIP:    allocatedIP,
 		Hostname:   hostname,
@@ -283,7 +272,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 	}
 
 	// Create the user in Unifi controller.
-	createdUser, err := c.client.CreateUser(ctx, c.site, newUser)
+	createdUser, err := c.client.CreateClient(ctx, c.site, newUser)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user with fixed IP: %w", err)
 	}
@@ -512,7 +501,7 @@ func generateMACForClaim(claimName string) string {
 // This helps avoid allocating IPs that are already in use by existing network devices.
 func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]string, error) {
 	// List all active clients on the site (this includes both wired and wireless clients)
-	clients, err := c.client.ListClientsActive(ctx, c.site)
+	clients, err := c.client.ListClientInfo(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list active clients: %w", err)
 	}
@@ -544,7 +533,7 @@ func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]
 // ReleaseIP releases an allocated IP address.
 func (c *Client) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress string) error {
 	// Delete the User object which releases the fixed IP assignment.
-	err := c.client.DeleteUserByMAC(ctx, c.site, macAddress)
+	err := c.client.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
 		// If the user is not found, that's acceptable - already released.
 		notFoundError := &unifi.NotFoundError{}
@@ -567,7 +556,7 @@ type StaticAssignment struct {
 // This queries all Unifi User objects with fixed IPs in the specified network.
 func (c *Client) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
 	// List all users with fixed IP assignments
-	users, err := c.client.ListUser(ctx, c.site)
+	users, err := c.client.ListClient(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list users: %w", err)
 	}
@@ -591,7 +580,7 @@ func (c *Client) GetStaticAssignments(ctx context.Context, networkID string) ([]
 // CreateStaticAssignment creates a static DHCP assignment in Unifi.
 func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
 	// Create or update User object with fixed IP
-	user := &unifi.User{
+	user := &unifi.Client{
 		MAC:        macAddress,
 		FixedIP:    ip,
 		Hostname:   hostname,
@@ -599,7 +588,7 @@ func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macA
 		NetworkID:  networkID,
 	}
 
-	_, err := c.client.CreateUser(ctx, c.site, user)
+	_, err := c.client.CreateClient(ctx, c.site, user)
 	if err != nil {
 		return fmt.Errorf("failed to create static assignment: %w", err)
 	}
@@ -609,7 +598,7 @@ func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macA
 
 // DeleteStaticAssignment removes a static DHCP assignment by MAC address.
 func (c *Client) DeleteStaticAssignment(ctx context.Context, networkID, macAddress string) error {
-	err := c.client.DeleteUserByMAC(ctx, c.site, macAddress)
+	err := c.client.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
 		// If the user is not found, that's acceptable - already released.
 		notFoundError := &unifi.NotFoundError{}
@@ -644,12 +633,13 @@ func (c *Client) FindNetworkForSubnet(ctx context.Context, subnet string) (*unif
 	// Find a network whose subnet contains the configured subnet
 	for i := range networks {
 		network := &networks[i]
-		if network.IPSubnet == "" {
+		ipSubnet := DerefString(network.IPSubnet)
+		if ipSubnet == "" {
 			continue
 		}
 
 		// Parse network's subnet
-		networkPrefix, err := netip.ParsePrefix(network.IPSubnet)
+		networkPrefix, err := netip.ParsePrefix(ipSubnet)
 		if err != nil {
 			continue
 		}
@@ -853,20 +843,42 @@ func formatIPRange(start, end netip.Addr) string {
 	return fmt.Sprintf("%s-%s", start.String(), end.String())
 }
 
+// DerefString reads an optional string field from a go-unifi struct. go-unifi
+// models these as *string and uses both a nil pointer and a pointer to "" for
+// "not configured", so both collapse to "" here. That keeps every caller's
+// `!= ""` test meaning exactly what it meant when these fields were plain
+// strings.
+func DerefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// DerefInt64 is DerefString's counterpart for go-unifi's optional numeric
+// fields: a nil pointer and a pointer to 0 both read as 0, which is the value
+// callers already treated as "not configured".
+func DerefInt64(i *int64) int64 {
+	if i == nil {
+		return 0
+	}
+	return *i
+}
+
 // collectDNSServers gathers non-empty DNS server addresses from network configuration.
 func collectDNSServers(network *unifi.Network) []string {
 	dnsServers := make([]string, 0, 4)
-	if network.DHCPDDNS1 != "" {
-		dnsServers = append(dnsServers, *network.DHCPDDNS1)
+	if dns := DerefString(network.DHCPDDNS1); dns != "" {
+		dnsServers = append(dnsServers, dns)
 	}
-	if network.DHCPDDNS2 != "" {
-		dnsServers = append(dnsServers, *network.DHCPDDNS2)
+	if dns := DerefString(network.DHCPDDNS2); dns != "" {
+		dnsServers = append(dnsServers, dns)
 	}
-	if network.DHCPDDNS3 != "" {
-		dnsServers = append(dnsServers, *network.DHCPDDNS3)
+	if dns := DerefString(network.DHCPDDNS3); dns != "" {
+		dnsServers = append(dnsServers, dns)
 	}
-	if network.DHCPDDNS4 != "" {
-		dnsServers = append(dnsServers, *network.DHCPDDNS4)
+	if dns := DerefString(network.DHCPDDNS4); dns != "" {
+		dnsServers = append(dnsServers, dns)
 	}
 	return dnsServers
 }

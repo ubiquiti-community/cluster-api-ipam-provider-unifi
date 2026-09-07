@@ -18,6 +18,8 @@ package unifi
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -52,7 +54,7 @@ func TestNewClient(t *testing.T) {
 
 func TestClient_ValidateCredentials(t *testing.T) {
 	type fields struct {
-		client *unifi.Client
+		client *unifi.ApiClient
 		site   string
 	}
 	type args struct{}
@@ -79,7 +81,7 @@ func TestClient_ValidateCredentials(t *testing.T) {
 
 func TestClient_GetNetwork(t *testing.T) {
 	type fields struct {
-		client *unifi.Client
+		client *unifi.ApiClient
 		site   string
 	}
 	type args struct {
@@ -117,7 +119,7 @@ func TestClient_GetNetwork(t *testing.T) {
 /*
 func TestClient_GetOrAllocateIP(t *testing.T) {
 	type fields struct {
-		client *unifi.Client
+		client *unifi.ApiClient
 		site   string
 	}
 	type args struct {
@@ -158,7 +160,7 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 /*
 func TestClient_allocateNextIP(t *testing.T) {
 	type fields struct {
-		client *unifi.Client
+		client *unifi.ApiClient
 		site   string
 	}
 	type args struct {
@@ -201,9 +203,127 @@ func TestClient_allocateNextIP(t *testing.T) {
 	}
 */
 
+func TestDerefString(t *testing.T) {
+	value := "10.0.0.1"
+	empty := ""
+
+	tests := []struct {
+		name string
+		in   *string
+		want string
+	}{
+		{name: "nil pointer is unset", in: nil, want: ""},
+		{name: "pointer to empty string is unset", in: &empty, want: ""},
+		{name: "pointer to value yields the value", in: &value, want: "10.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DerefString(tt.in); got != tt.want {
+				t.Errorf("DerefString() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCollectDNSServers pins the unset semantics the pointer migration has to
+// preserve: go-unifi v1.34.0 models an unconfigured DHCP DNS slot as either a
+// nil *string or a pointer to "", and both must be skipped exactly the way the
+// pre-migration `!= ""` check skipped a plain empty string.
+func TestCollectDNSServers(t *testing.T) {
+	tests := []struct {
+		name    string
+		network *unifi.Network
+		want    []string
+	}{
+		{
+			name:    "all slots nil",
+			network: &unifi.Network{},
+			want:    []string{},
+		},
+		{
+			name: "all slots point at empty strings",
+			network: &unifi.Network{
+				DHCPDDNS1: unifi.Ptr(""),
+				DHCPDDNS2: unifi.Ptr(""),
+				DHCPDDNS3: unifi.Ptr(""),
+				DHCPDDNS4: unifi.Ptr(""),
+			},
+			want: []string{},
+		},
+		{
+			name: "empty and nil slots are skipped, order preserved",
+			network: &unifi.Network{
+				DHCPDDNS1: unifi.Ptr(""),
+				DHCPDDNS2: unifi.Ptr("1.1.1.1"),
+				DHCPDDNS3: nil,
+				DHCPDDNS4: unifi.Ptr("9.9.9.9"),
+			},
+			want: []string{"1.1.1.1", "9.9.9.9"},
+		},
+		{
+			name: "all slots configured",
+			network: &unifi.Network{
+				DHCPDDNS1: unifi.Ptr("1.1.1.1"),
+				DHCPDDNS2: unifi.Ptr("1.0.0.1"),
+				DHCPDDNS3: unifi.Ptr("8.8.8.8"),
+				DHCPDDNS4: unifi.Ptr("8.8.4.4"),
+			},
+			want: []string{"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := collectDNSServers(tt.network); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("collectDNSServers() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewClient_DefaultsSite covers the one piece of behavior NewClient owns
+// itself; everything else it does is handed to unifi.New.
+func TestNewClient_DefaultsSite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"meta":{"rc":"ok"},"data":[]}`))
+	}))
+	defer srv.Close()
+
+	tests := []struct {
+		name     string
+		site     string
+		wantSite string
+	}{
+		{name: "empty site falls back to default", site: "", wantSite: "default"},
+		{name: "explicit site is kept", site: "office", wantSite: "office"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewClient(Config{Host: srv.URL, APIKey: "test-key", Site: tt.site})
+			if err != nil {
+				t.Fatalf("NewClient() unexpected error = %v", err)
+			}
+			if got.site != tt.wantSite {
+				t.Errorf("NewClient() site = %q, want %q", got.site, tt.wantSite)
+			}
+			if got.client == nil {
+				t.Error("NewClient() did not build a go-unifi ApiClient")
+			}
+		})
+	}
+}
+
+// TestNewClient_RejectsBadBaseURL checks that a construction failure from
+// go-unifi is surfaced rather than swallowed.
+func TestNewClient_RejectsBadBaseURL(t *testing.T) {
+	if _, err := NewClient(Config{Host: "http://unifi.example.com/api", APIKey: "test-key"}); err == nil {
+		t.Error("NewClient() with a base URL ending in /api: got nil error, want an error")
+	}
+}
+
 func TestClient_ReleaseIP(t *testing.T) {
 	type fields struct {
-		client *unifi.Client
+		client *unifi.ApiClient
 		site   string
 	}
 	type args struct {

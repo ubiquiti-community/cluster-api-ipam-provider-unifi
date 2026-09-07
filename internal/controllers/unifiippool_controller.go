@@ -381,22 +381,25 @@ func (r *UnifiIPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2
 		return fmt.Errorf("failed to get network details: %w", err)
 	}
 
-	// Update network info
+	// Update network info. go-unifi models these optional fields as pointers,
+	// where nil and the zero value both mean "not configured".
 	pool.Status.NetworkInfo = &v1beta2.NetworkInfo{
-		Name:         network.Name,
+		Name:         unifi.DerefString(network.Name),
 		Purpose:      network.Purpose,
-		NetworkGroup: network.NetworkGroup,
+		NetworkGroup: unifi.DerefString(network.NetworkGroup),
 	}
 
 	// Add VLAN if configured
-	if network.VLAN != 0 && network.VLAN <= 4094 { // Valid VLAN range
-		vlan := int32(network.VLAN) // #nosec G115 - checked range
+	vlanID := unifi.DerefInt64(network.VLAN)
+	if vlanID != 0 && vlanID <= 4094 { // Valid VLAN range
+		vlan := int32(vlanID) // #nosec G115 - checked range
 		pool.Status.NetworkInfo.VLAN = &vlan
 	}
 
 	// Add DHCP lease time if DHCP is enabled
-	if network.DHCPDEnabled && network.DHCPDLeaseTime > 0 && network.DHCPDLeaseTime <= 2147483647 {
-		leaseTime := int32(network.DHCPDLeaseTime) // #nosec G115 - checked range
+	dhcpdLeaseTime := unifi.DerefInt64(network.DHCPDLeaseTime)
+	if network.DHCPDEnabled && dhcpdLeaseTime > 0 && dhcpdLeaseTime <= 2147483647 {
+		leaseTime := int32(dhcpdLeaseTime) // #nosec G115 - checked range
 		pool.Status.NetworkInfo.DHCPLeaseTime = &leaseTime
 	}
 
@@ -407,10 +410,12 @@ func (r *UnifiIPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2
 		DHCPEnabled: &network.DHCPDEnabled,
 	}
 
-	if network.DHCPDEnabled && network.DHCPDStart != "" && network.DHCPDStop != "" {
+	dhcpdStart := unifi.DerefString(network.DHCPDStart)
+	dhcpdStop := unifi.DerefString(network.DHCPDStop)
+	if network.DHCPDEnabled && dhcpdStart != "" && dhcpdStop != "" {
 		pool.Status.ObservedNetworkConfiguration.DHCPRange = &v1beta2.DHCPRangeConfig{
-			Start: network.DHCPDStart,
-			Stop:  network.DHCPDStop,
+			Start: dhcpdStart,
+			Stop:  dhcpdStop,
 		}
 	}
 
