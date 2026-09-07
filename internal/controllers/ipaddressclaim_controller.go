@@ -183,7 +183,7 @@ func (h *UnifiClaimHandler) isAddressAllocated(address *ipamv1beta2.IPAddress, a
 	return false
 }
 
-func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client, *v1beta2.SubnetSpec, error) {
+func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.ApiClient, *v1beta2.SubnetSpec, error) {
 	instance, err := h.getUnifiInstance(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -203,7 +203,7 @@ func (h *UnifiClaimHandler) setupAllocation(ctx context.Context) (*unifi.Client,
 		insecure = *instance.Spec.Insecure
 	}
 
-	unifiClient, err := unifi.NewClient(unifi.Config{
+	unifiClient, err := unifi.NewApiClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   string(secret.Data["apiKey"]),
 		Site:     site,
@@ -248,7 +248,7 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 	return &secret, nil
 }
 
-func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.Client, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
+func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.ApiClient, subnetSpec *v1beta2.SubnetSpec, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
 	macAddress := generateMACAddress(h.claim.Name)
 
 	// Use network ID from pool (either configured or discovered)

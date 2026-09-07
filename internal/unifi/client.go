@@ -39,10 +39,10 @@ type Config struct {
 	Insecure bool
 }
 
-// Client wraps the Unifi API client with IPAM-specific operations.
-type Client struct {
-	client *unifi.ApiClient
-	site   string
+// ApiClient wraps the Unifi API client with IPAM-specific operations.
+type ApiClient struct {
+	api  *unifi.ApiClient
+	site string
 }
 
 // IPAllocation represents an allocated IP address.
@@ -59,15 +59,15 @@ type IPAllocation struct {
 // matches the timeout this package used to set on its own *http.Client.
 const defaultTimeoutSeconds = 30
 
-// NewClient creates a new Unifi client.
-func NewClient(cfg Config) (*Client, error) {
+// NewApiClient creates a new Unifi client.
+func NewApiClient(cfg Config) (*ApiClient, error) {
 	if cfg.Site == "" {
 		cfg.Site = "default"
 	}
 
 	// go-unifi owns its transport: unifi.New builds a retrying HTTP client with
 	// a cookie jar, applies InsecureSkipVerify when AllowInsecure is set, works
-	// out the controller's API URL style and, for user/password auth, logs in.
+	// out the controller's API URL style and, for client/password auth, logs in.
 	// With an API key there is no login step.
 	timeoutSeconds := defaultTimeoutSeconds
 	client, err := unifi.New(context.Background(), &unifi.Config{
@@ -80,16 +80,16 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create Unifi client: %w", err)
 	}
 
-	return &Client{
-		client: client,
-		site:   cfg.Site,
+	return &ApiClient{
+		api:  client,
+		site: cfg.Site,
 	}, nil
 }
 
 // ValidateCredentials tests the connection and credentials.
-func (c *Client) ValidateCredentials(ctx context.Context) error {
+func (c *ApiClient) ValidateCredentials(ctx context.Context) error {
 	// Try to list networks as a validation check.
-	_, err := c.client.ListNetwork(ctx, c.site)
+	_, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return fmt.Errorf("failed to validate credentials: %w", err)
 	}
@@ -97,8 +97,8 @@ func (c *Client) ValidateCredentials(ctx context.Context) error {
 }
 
 // GetNetwork retrieves network information by ID.
-func (c *Client) GetNetwork(ctx context.Context, networkID string) (*unifi.Network, error) {
-	networks, err := c.client.ListNetwork(ctx, c.site)
+func (c *ApiClient) GetNetwork(ctx context.Context, networkID string) (*unifi.Network, error) {
+	networks, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
@@ -116,7 +116,7 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (*unifi.Netwo
 // This syncs the CIDR, gateway, and optionally calculates prefix and exclude ranges based on DHCP settings.
 //
 //nolint:cyclop // Network configuration sync requires multiple conditional checks
-func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
+func (c *ApiClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
 	network, err := c.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, err
@@ -193,11 +193,11 @@ func (c *Client) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1be
 }
 
 // GetOrAllocateIP gets an existing IP or allocates a new one.
-func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
-	// First, check if this MAC already has a fixed IP assignment via User object.
-	existingUser, err := c.client.GetClientByMAC(ctx, c.site, macAddress)
-	if err == nil && existingUser != nil {
-		// User exists - return existing allocation with Prefix and Gateway.
+func (c *ApiClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
+	// First, check if this MAC already has a fixed IP assignment via Client object.
+	existingClient, err := c.api.GetClientByMAC(ctx, c.site, macAddress)
+	if err == nil && existingClient != nil {
+		// Client exists - return existing allocation with Prefix and Gateway.
 		// Need to determine prefix and gateway from pool config.
 		defaultPrefix := int32(24)
 		if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
@@ -207,7 +207,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 		// Find subnet containing the existing IP to get accurate prefix/gateway
 		prefix := defaultPrefix
 		gateway := pool.Spec.Gateway
-		addr, err := netip.ParseAddr(existingUser.FixedIP)
+		addr, err := netip.ParseAddr(existingClient.FixedIP)
 		if err == nil {
 			for _, subnet := range pool.Spec.Subnets {
 				// Check if IP is in this subnet
@@ -232,10 +232,10 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 		}
 
 		return &IPAllocation{
-			IPAddress:  existingUser.FixedIP,
-			MacAddress: existingUser.MAC,
-			Hostname:   existingUser.Hostname,
-			UseFixedIP: existingUser.UseFixedIP,
+			IPAddress:  existingClient.FixedIP,
+			MacAddress: existingClient.MAC,
+			Hostname:   existingClient.Hostname,
+			UseFixedIP: existingClient.UseFixedIP,
 			Prefix:     prefix,
 			Gateway:    gateway,
 		}, nil
@@ -246,7 +246,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 		// Check if it's a NotFoundError - that's expected, other errors should be returned.
 		notFoundError := &unifi.NotFoundError{}
 		if errors.As(err, &notFoundError) {
-			return nil, fmt.Errorf("failed to check existing user: %w", err)
+			return nil, fmt.Errorf("failed to check existing client: %w", err)
 		}
 	}
 
@@ -262,8 +262,8 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 		return nil, fmt.Errorf("failed to allocate IP: %w", err)
 	}
 
-	// Create a User object with fixed IP assignment.
-	newUser := &unifi.Client{
+	// Create a Client object with fixed IP assignment.
+	newClient := &unifi.Client{
 		MAC:        macAddress,
 		FixedIP:    allocatedIP,
 		Hostname:   hostname,
@@ -271,18 +271,18 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 		NetworkID:  networkID,
 	}
 
-	// Create the user in Unifi controller.
-	createdUser, err := c.client.CreateClient(ctx, c.site, newUser)
+	// Create the client in Unifi controller.
+	createdClient, err := c.api.CreateClient(ctx, c.site, newClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create user with fixed IP: %w", err)
+		return nil, fmt.Errorf("failed to create client with fixed IP: %w", err)
 	}
 
 	// Return the allocation with metadata.
 	return &IPAllocation{
-		IPAddress:  createdUser.FixedIP,
-		MacAddress: createdUser.MAC,
-		Hostname:   createdUser.Hostname,
-		UseFixedIP: createdUser.UseFixedIP,
+		IPAddress:  createdClient.FixedIP,
+		MacAddress: createdClient.MAC,
+		Hostname:   createdClient.Hostname,
+		UseFixedIP: createdClient.UseFixedIP,
 		Prefix:     prefix,
 		Gateway:    gateway,
 	}, nil
@@ -292,7 +292,7 @@ func (c *Client) GetOrAllocateIP(ctx context.Context, pool *v1beta2.UnifiIPPool,
 // 1. PreAllocations (static assignment or IP reuse)
 // 2. Annotation request (claim specifies desired IP)
 // 3. Dynamic allocation (iterate through subnets)
-func (c *Client) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
+func (c *ApiClient) allocateNextIP(ctx context.Context, pool *v1beta2.UnifiIPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
 	if pool == nil {
 		return "", 0, "", fmt.Errorf("pool is nil")
 	}
@@ -499,9 +499,9 @@ func generateMACForClaim(claimName string) string {
 
 // getExistingClientIPs retrieves all currently active/leased IPs from Unifi clients.
 // This helps avoid allocating IPs that are already in use by existing network devices.
-func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]string, error) {
+func (c *ApiClient) getExistingClientIPs(ctx context.Context, networkID string) ([]string, error) {
 	// List all active clients on the site (this includes both wired and wireless clients)
-	clients, err := c.client.ListClientInfo(ctx, c.site)
+	clients, err := c.api.ListClientInfo(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list active clients: %w", err)
 	}
@@ -519,7 +519,7 @@ func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]
 			}
 		}
 
-		// Also add any fixed IP assignments from the User records
+		// Also add any fixed IP assignments from the Client records
 		if client.FixedIP != "" {
 			if networkID == "" || client.NetworkId == networkID {
 				existingIPs = append(existingIPs, client.FixedIP)
@@ -531,16 +531,16 @@ func (c *Client) getExistingClientIPs(ctx context.Context, networkID string) ([]
 }
 
 // ReleaseIP releases an allocated IP address.
-func (c *Client) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress string) error {
-	// Delete the User object which releases the fixed IP assignment.
-	err := c.client.DeleteClientByMAC(ctx, c.site, macAddress)
+func (c *ApiClient) ReleaseIP(ctx context.Context, networkID, ipAddress, macAddress string) error {
+	// Delete the Client object which releases the fixed IP assignment.
+	err := c.api.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
-		// If the user is not found, that's acceptable - already released.
+		// If the client is not found, that's acceptable - already released.
 		notFoundError := &unifi.NotFoundError{}
 		if errors.As(err, &notFoundError) {
 			return nil
 		}
-		return fmt.Errorf("failed to delete user with MAC %s: %w", macAddress, err)
+		return fmt.Errorf("failed to delete client with MAC %s: %w", macAddress, err)
 	}
 	return nil
 }
@@ -553,23 +553,23 @@ type StaticAssignment struct {
 }
 
 // GetStaticAssignments retrieves all static DHCP assignments for a network.
-// This queries all Unifi User objects with fixed IPs in the specified network.
-func (c *Client) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
-	// List all users with fixed IP assignments
-	users, err := c.client.ListClient(ctx, c.site)
+// This queries all Unifi Client objects with fixed IPs in the specified network.
+func (c *ApiClient) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
+	// List all clients with fixed IP assignments
+	clients, err := c.api.ListClient(ctx, c.site)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list users: %w", err)
+		return nil, fmt.Errorf("failed to list clients: %w", err)
 	}
 
 	assignments := make([]StaticAssignment, 0)
-	for i := range users {
-		user := &users[i]
+	for i := range clients {
+		client := &clients[i]
 		// Filter by network and fixed IP
-		if user.NetworkID == networkID && user.UseFixedIP && user.FixedIP != "" {
+		if client.NetworkID == networkID && client.UseFixedIP && client.FixedIP != "" {
 			assignments = append(assignments, StaticAssignment{
-				IP:       user.FixedIP,
-				MAC:      user.MAC,
-				Hostname: user.Hostname,
+				IP:       client.FixedIP,
+				MAC:      client.MAC,
+				Hostname: client.Hostname,
 			})
 		}
 	}
@@ -578,9 +578,9 @@ func (c *Client) GetStaticAssignments(ctx context.Context, networkID string) ([]
 }
 
 // CreateStaticAssignment creates a static DHCP assignment in Unifi.
-func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
-	// Create or update User object with fixed IP
-	user := &unifi.Client{
+func (c *ApiClient) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
+	// Create or update Client object with fixed IP
+	client := &unifi.Client{
 		MAC:        macAddress,
 		FixedIP:    ip,
 		Hostname:   hostname,
@@ -588,7 +588,7 @@ func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macA
 		NetworkID:  networkID,
 	}
 
-	_, err := c.client.CreateClient(ctx, c.site, user)
+	_, err := c.api.CreateClient(ctx, c.site, client)
 	if err != nil {
 		return fmt.Errorf("failed to create static assignment: %w", err)
 	}
@@ -597,10 +597,10 @@ func (c *Client) CreateStaticAssignment(ctx context.Context, networkID, ip, macA
 }
 
 // DeleteStaticAssignment removes a static DHCP assignment by MAC address.
-func (c *Client) DeleteStaticAssignment(ctx context.Context, networkID, macAddress string) error {
-	err := c.client.DeleteClientByMAC(ctx, c.site, macAddress)
+func (c *ApiClient) DeleteStaticAssignment(ctx context.Context, networkID, macAddress string) error {
+	err := c.api.DeleteClientByMAC(ctx, c.site, macAddress)
 	if err != nil {
-		// If the user is not found, that's acceptable - already released.
+		// If the client is not found, that's acceptable - already released.
 		notFoundError := &unifi.NotFoundError{}
 		if errors.As(err, &notFoundError) {
 			return nil
@@ -612,7 +612,7 @@ func (c *Client) DeleteStaticAssignment(ctx context.Context, networkID, macAddre
 
 // FindNetworkForSubnet auto-discovers a Unifi network that contains the given subnet.
 // Returns the network if found, or an error if no matching network exists.
-func (c *Client) FindNetworkForSubnet(ctx context.Context, subnet string) (*unifi.Network, error) {
+func (c *ApiClient) FindNetworkForSubnet(ctx context.Context, subnet string) (*unifi.Network, error) {
 	// Parse the subnet to check
 	var subnetPrefix netip.Prefix
 	var err error
@@ -625,7 +625,7 @@ func (c *Client) FindNetworkForSubnet(ctx context.Context, subnet string) (*unif
 	}
 
 	// List all networks
-	networks, err := c.client.ListNetwork(ctx, c.site)
+	networks, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}

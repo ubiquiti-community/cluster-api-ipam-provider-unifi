@@ -96,7 +96,7 @@ func (r *UnifiInstanceReconciler) getAPIKey(ctx context.Context, instance *v1bet
 	return apiKey, nil
 }
 
-func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.Client, error) {
+func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, instance *v1beta2.UnifiInstance, apiKey string, logger logr.Logger) (*unifi.ApiClient, error) {
 	site := DefaultUnifiSite
 	if instance.Spec.Site != nil {
 		site = *instance.Spec.Site
@@ -105,7 +105,7 @@ func (r *UnifiInstanceReconciler) createAndValidateClient(ctx context.Context, i
 	if instance.Spec.Insecure != nil {
 		insecure = *instance.Spec.Insecure
 	}
-	client, err := unifi.NewClient(unifi.Config{
+	client, err := unifi.NewApiClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   apiKey,
 		Site:     site,

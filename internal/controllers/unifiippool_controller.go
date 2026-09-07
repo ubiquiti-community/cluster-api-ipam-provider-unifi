@@ -589,7 +589,7 @@ func (r *UnifiIPPoolReconciler) calculateNextSyncInterval(pool *v1beta2.UnifiIPP
 }
 
 // createUnifiClient creates a Unifi client from instance credentials.
-func (r *UnifiIPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1beta2.UnifiInstance, namespace string) (*unifi.Client, error) {
+func (r *UnifiIPPoolReconciler) createUnifiClient(ctx context.Context, instance *v1beta2.UnifiInstance, namespace string) (*unifi.ApiClient, error) {
 	// Get credentials secret
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{
@@ -608,7 +608,7 @@ func (r *UnifiIPPoolReconciler) createUnifiClient(ctx context.Context, instance 
 		insecure = *instance.Spec.Insecure
 	}
 
-	return unifi.NewClient(unifi.Config{
+	return unifi.NewApiClient(unifi.Config{
 		Host:     instance.Spec.Host,
 		APIKey:   string(secret.Data["apiKey"]),
 		Site:     site,

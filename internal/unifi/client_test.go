@@ -26,33 +26,33 @@ import (
 	"github.com/ubiquiti-community/go-unifi/unifi"
 )
 
-func TestNewClient(t *testing.T) {
+func TestNewApiClient(t *testing.T) {
 	type args struct {
 		cfg Config
 	}
 	tests := []struct {
 		name    string
 		args    args
-		want    *Client
+		want    *ApiClient
 		wantErr bool
 	}{
 		// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(tt.args.cfg)
+			got, err := NewApiClient(tt.args.cfg)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("NewApiClient() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewClient() = %v, want %v", got, tt.want)
+				t.Errorf("NewApiClient() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestClient_ValidateCredentials(t *testing.T) {
+func TestApiClient_ValidateCredentials(t *testing.T) {
 	type fields struct {
 		client *unifi.ApiClient
 		site   string
@@ -68,18 +68,18 @@ func TestClient_ValidateCredentials(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				client: tt.fields.client,
-				site:   tt.fields.site,
+			c := &ApiClient{
+				api:  tt.fields.client,
+				site: tt.fields.site,
 			}
 			if err := c.ValidateCredentials(context.Background()); (err != nil) != tt.wantErr {
-				t.Errorf("Client.ValidateCredentials() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ApiClient.ValidateCredentials() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestClient_GetNetwork(t *testing.T) {
+func TestApiClient_GetNetwork(t *testing.T) {
 	type fields struct {
 		client *unifi.ApiClient
 		site   string
@@ -98,26 +98,26 @@ func TestClient_GetNetwork(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				client: tt.fields.client,
-				site:   tt.fields.site,
+			c := &ApiClient{
+				api:  tt.fields.client,
+				site: tt.fields.site,
 			}
 			got, err := c.GetNetwork(context.Background(), tt.args.networkID)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.GetNetwork() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ApiClient.GetNetwork() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Client.GetNetwork() = %v, want %v", got, tt.want)
+				t.Errorf("ApiClient.GetNetwork() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestClient_GetOrAllocateIP tests GetOrAllocateIP function.
+// TestApiClient_GetOrAllocateIP tests GetOrAllocateIP function.
 // TODO: Update test to match new signature with pool and claim parameters
 /*
-func TestClient_GetOrAllocateIP(t *testing.T) {
+func TestApiClient_GetOrAllocateIP(t *testing.T) {
 	type fields struct {
 		client *unifi.ApiClient
 		site   string
@@ -145,20 +145,20 @@ func TestClient_GetOrAllocateIP(t *testing.T) {
 			}
 			got, err := c.GetOrAllocateIP(context.Background(), tt.args.pool, tt.args.claim, tt.args.networkID, tt.args.macAddress, tt.args.hostname, tt.args.addressesInUse)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.GetOrAllocateIP() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ApiClient.GetOrAllocateIP() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Client.GetOrAllocateIP() = %v, want %v", got, tt.want)
+				t.Errorf("ApiClient.GetOrAllocateIP() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 */
 
-// TestClient_allocateNextIP tests the allocateNextIP function.
+// TestApiClient_allocateNextIP tests the allocateNextIP function.
 // TODO: Update test to match new signature with context, pool, claim, and 4 return values (ip, prefix, gateway, error)
 /*
-func TestClient_allocateNextIP(t *testing.T) {
+func TestApiClient_allocateNextIP(t *testing.T) {
 	type fields struct {
 		client *unifi.ApiClient
 		site   string
@@ -187,17 +187,17 @@ func TestClient_allocateNextIP(t *testing.T) {
 			}
 			gotIP, gotPrefix, gotGateway, err := c.allocateNextIP(tt.args.ctx, tt.args.pool, tt.args.claim, tt.args.network, tt.args.addressesInUse)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Client.allocateNextIP() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ApiClient.allocateNextIP() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if gotIP != tt.wantIP {
-				t.Errorf("Client.allocateNextIP() gotIP = %v, want %v", gotIP, tt.wantIP)
+				t.Errorf("ApiClient.allocateNextIP() gotIP = %v, want %v", gotIP, tt.wantIP)
 			}
 			if gotPrefix != tt.wantPrefix {
-				t.Errorf("Client.allocateNextIP() gotPrefix = %v, want %v", gotPrefix, tt.wantPrefix)
+				t.Errorf("ApiClient.allocateNextIP() gotPrefix = %v, want %v", gotPrefix, tt.wantPrefix)
 			}
 			if gotGateway != tt.wantGateway {
-				t.Errorf("Client.allocateNextIP() gotGateway = %v, want %v", gotGateway, tt.wantGateway)
+				t.Errorf("ApiClient.allocateNextIP() gotGateway = %v, want %v", gotGateway, tt.wantGateway)
 			}
 		})
 	}
@@ -280,9 +280,9 @@ func TestCollectDNSServers(t *testing.T) {
 	}
 }
 
-// TestNewClient_DefaultsSite covers the one piece of behavior NewClient owns
+// TestNewApiClient_DefaultsSite covers the one piece of behavior NewApiClient owns
 // itself; everything else it does is handed to unifi.New.
-func TestNewClient_DefaultsSite(t *testing.T) {
+func TestNewApiClient_DefaultsSite(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"meta":{"rc":"ok"},"data":[]}`))
@@ -299,29 +299,29 @@ func TestNewClient_DefaultsSite(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(Config{Host: srv.URL, APIKey: "test-key", Site: tt.site})
+			got, err := NewApiClient(Config{Host: srv.URL, APIKey: "test-key", Site: tt.site})
 			if err != nil {
-				t.Fatalf("NewClient() unexpected error = %v", err)
+				t.Fatalf("NewApiClient() unexpected error = %v", err)
 			}
 			if got.site != tt.wantSite {
-				t.Errorf("NewClient() site = %q, want %q", got.site, tt.wantSite)
+				t.Errorf("NewApiClient() site = %q, want %q", got.site, tt.wantSite)
 			}
-			if got.client == nil {
-				t.Error("NewClient() did not build a go-unifi ApiClient")
+			if got.api == nil {
+				t.Error("NewApiClient() did not build a go-unifi ApiClient")
 			}
 		})
 	}
 }
 
-// TestNewClient_RejectsBadBaseURL checks that a construction failure from
+// TestNewApiClient_RejectsBadBaseURL checks that a construction failure from
 // go-unifi is surfaced rather than swallowed.
-func TestNewClient_RejectsBadBaseURL(t *testing.T) {
-	if _, err := NewClient(Config{Host: "http://unifi.example.com/api", APIKey: "test-key"}); err == nil {
-		t.Error("NewClient() with a base URL ending in /api: got nil error, want an error")
+func TestNewApiClient_RejectsBadBaseURL(t *testing.T) {
+	if _, err := NewApiClient(Config{Host: "http://unifi.example.com/api", APIKey: "test-key"}); err == nil {
+		t.Error("NewApiClient() with a base URL ending in /api: got nil error, want an error")
 	}
 }
 
-func TestClient_ReleaseIP(t *testing.T) {
+func TestApiClient_ReleaseIP(t *testing.T) {
 	type fields struct {
 		client *unifi.ApiClient
 		site   string
@@ -341,12 +341,12 @@ func TestClient_ReleaseIP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{
-				client: tt.fields.client,
-				site:   tt.fields.site,
+			c := &ApiClient{
+				api:  tt.fields.client,
+				site: tt.fields.site,
 			}
 			if err := c.ReleaseIP(context.Background(), tt.args.networkID, tt.args.ipAddress, tt.args.macAddress); (err != nil) != tt.wantErr {
-				t.Errorf("Client.ReleaseIP() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ApiClient.ReleaseIP() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
