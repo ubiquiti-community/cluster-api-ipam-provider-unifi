@@ -55,9 +55,24 @@ type IPAllocation struct {
 	Gateway    string
 }
 
-// defaultTimeoutSeconds is the per-request timeout handed to go-unifi. It
-// matches the timeout this package used to set on its own *http.Client.
-const defaultTimeoutSeconds = 30
+// Request budget.
+//
+// go-unifi's TimeoutSeconds is PER ATTEMPT, not per call: it lands on
+// retryablehttp's inner http.Client, and the retry loop wraps it. Left at
+// go-unifi's defaults (30s, RetryMax 4) a single call could run 5 attempts plus
+// ~15s of backoff -- about 165s of wall time, five and a half times the flat 30s
+// whole-call timeout this package used before the migration, with a reconcile
+// worker blocked for all of it.
+//
+// So bound both knobs explicitly. Two attempts of 15s with retryablehttp's 1s
+// minimum backoff puts the worst case at ~31s, which keeps the old whole-call
+// budget. One retry is kept rather than none because go-unifi retries a
+// controller 429 and honors its Retry-After; beyond that, requeuing the
+// reconcile is the right retry layer, not the HTTP client.
+const (
+	requestTimeoutSeconds = 15
+	requestRetryMax       = 1
+)
 
 // NewApiClient creates a new Unifi client.
 func NewApiClient(cfg Config) (*ApiClient, error) {
@@ -69,12 +84,14 @@ func NewApiClient(cfg Config) (*ApiClient, error) {
 	// a cookie jar, applies InsecureSkipVerify when AllowInsecure is set, works
 	// out the controller's API URL style and, for client/password auth, logs in.
 	// With an API key there is no login step.
-	timeoutSeconds := defaultTimeoutSeconds
+	timeoutSeconds := requestTimeoutSeconds
+	retryMax := requestRetryMax
 	client, err := unifi.New(context.Background(), &unifi.Config{
 		BaseURL:        cfg.Host,
 		APIKey:         cfg.APIKey,
 		AllowInsecure:  cfg.Insecure,
 		TimeoutSeconds: &timeoutSeconds,
+		RetryMax:       &retryMax,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Unifi client: %w", err)

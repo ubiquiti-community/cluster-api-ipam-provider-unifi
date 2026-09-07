@@ -667,7 +667,7 @@ func (r *UnifiIPPoolReconciler) discoverNetwork(ctx context.Context, pool *v1bet
 	pool.Status.DiscoveredNetworkID = network.ID
 	logger.Info("discovered Unifi network for pool",
 		"network_id", network.ID,
-		"network_name", network.Name,
+		"network_name", unifi.DerefString(network.Name),
 		"subnet", subnetCIDR)
 
 	return nil
