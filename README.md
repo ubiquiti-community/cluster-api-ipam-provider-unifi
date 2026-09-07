@@ -183,12 +183,25 @@ kind: IPAddressClaim
 metadata:
   name: my-machine-ip
   namespace: default
+  annotations:
+    # Optional: the MAC of the machine this address is for.
+    unifi.ipam.cluster.x-k8s.io/mac-address: "f4:4d:30:6f:a7:93"
 spec:
   poolRef:
     apiGroup: unifi.ipam.cluster.x-k8s.io
     kind: IPPool
     name: cluster-pool
 ```
+
+Each allocation is backed by a fixed-IP reservation in the Unifi controller.
+Annotate the claim with the machine's MAC (`unifi.ipam.cluster.x-k8s.io/mac-address`;
+the `capt.tinkerbell.org/mac-address` annotation that
+cluster-api-provider-tinkerbell sets is also recognized) and the reservation is
+made on that device's own client record, so Unifi DHCP hands the machine the same
+address. A device Unifi already knows keeps its reservation if it lies in the
+pool; otherwise a pool address is written onto its existing record. Without an
+annotation the reservation is made on a deterministic, locally administered MAC
+derived from the claim name.
 
 ## Architecture
 

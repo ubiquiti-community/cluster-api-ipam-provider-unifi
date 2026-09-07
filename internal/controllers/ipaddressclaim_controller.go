@@ -247,7 +247,10 @@ func (h *UnifiClaimHandler) getCredentialsSecret(ctx context.Context, instance *
 }
 
 func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2.IPAddress, unifiClient *unifi.APIClient, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) (*ctrl.Result, error) {
-	macAddress := generateMACAddress(h.claim.Name)
+	macAddress, err := unifi.MACForClaim(h.claim)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use network ID from pool (either configured or discovered)
 	networkID := h.pool.Spec.NetworkID //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
@@ -299,10 +302,4 @@ func (h *UnifiClaimHandler) ReleaseAddress(ctx context.Context) (*ctrl.Result, e
 	// The Unifi client's ReleaseIP method is a no-op for now
 	// The IPAddress resource deletion already handles deallocation tracking.
 	return nil, nil
-}
-
-// generateMACAddress generates a simple MAC address based on the claim name.
-// TODO: Use a more robust generation method in production.
-func generateMACAddress(name string) string {
-	return fmt.Sprintf("00:00:00:00:00:%02x", len(name)%256)
 }

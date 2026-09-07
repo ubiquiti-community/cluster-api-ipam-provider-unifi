@@ -20,14 +20,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1beta2 "github.com/ubiquiti-community/cluster-api-ipam-provider-unifi/api/v1beta2"
+
+	ipamv1beta2 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 )
 
 func TestAPIClient_ValidateCredentials(t *testing.T) {
@@ -345,6 +350,8 @@ type fakeController struct {
 
 	clientGets int
 	created    []unifi.Client
+	// updated records every PUT to rest/user/{id}, with ID set from the path.
+	updated []unifi.Client
 }
 
 func (f *fakeController) start(t *testing.T) *APIClient {
@@ -352,7 +359,26 @@ func (f *fakeController) start(t *testing.T) *APIClient {
 
 	const base = "/proxy/network/api/s/default/rest/"
 	mux := http.NewServeMux()
-	mux.HandleFunc(base+"user", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(base+"user", f.usersHandler(t))
+	mux.HandleFunc(base+"user/", f.userByIDHandler(t, base+"user/"))
+	mux.HandleFunc(base+"networkconf", func(w http.ResponseWriter, _ *http.Request) {
+		writeUnifiData(t, w, f.networks)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := NewAPIClient(Config{Host: srv.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("NewAPIClient() unexpected error = %v", err)
+	}
+	return c
+}
+
+// usersHandler serves GET (list) and POST (create) on rest/user.
+func (f *fakeController) usersHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			f.clientGets++
@@ -371,19 +397,35 @@ func (f *fakeController) start(t *testing.T) *APIClient {
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	})
-	mux.HandleFunc(base+"networkconf", func(w http.ResponseWriter, _ *http.Request) {
-		writeUnifiData(t, w, f.networks)
-	})
-
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	c, err := NewAPIClient(Config{Host: srv.URL, APIKey: "test-key"})
-	if err != nil {
-		t.Fatalf("NewAPIClient() unexpected error = %v", err)
 	}
-	return c
+}
+
+// userByIDHandler serves GET and PUT (update) on rest/user/{id}.
+func (f *fakeController) userByIDHandler(t *testing.T, prefix string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, prefix)
+		switch r.Method {
+		case http.MethodPut:
+			var updated unifi.Client
+			if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+				t.Errorf("fake controller could not decode update body: %v", err)
+			}
+			updated.ID = id
+			f.updated = append(f.updated, updated)
+			writeUnifiData(t, w, []unifi.Client{updated})
+		case http.MethodGet:
+			for _, c := range f.clients {
+				if c.ID == id {
+					writeUnifiData(t, w, []unifi.Client{c})
+					return
+				}
+			}
+			writeUnifiData(t, w, []unifi.Client{})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
 }
 
 func writeUnifiData[T any](t *testing.T, w http.ResponseWriter, data []T) {
@@ -533,5 +575,158 @@ func TestAPIClient_GetOrAllocateIP_ReusesExisting(t *testing.T) {
 	}
 	if len(f.created) != 0 {
 		t.Errorf("expected no client to be created when reusing, got %d", len(f.created))
+	}
+}
+
+// TestAPIClient_GetOrAllocateIP_SeesFixedIPsWithoutNetworkID reproduces the
+// api.err.DuplicateFixedIP loop seen in the field. A reservation made from the
+// UniFi UI carries no network_id, yet UniFi enforces it site-wide, so the
+// allocator must count it as taken instead of offering it again.
+func TestAPIClient_GetOrAllocateIP_SeesFixedIPsWithoutNetworkID(t *testing.T) {
+	f := &fakeController{
+		networks: testNetworks(),
+		clients: []unifi.Client{{
+			MAC:        "88:a2:9e:87:76:6c",
+			FixedIP:    "192.168.1.2",
+			UseFixedIP: true,
+			// No NetworkID: this is what a UI-created reservation looks like.
+		}},
+	}
+	c := f.start(t)
+
+	got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+		"net-1", "02:11:22:33:44:55", "host-1", nil)
+	if err != nil {
+		t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+	}
+	if got.IPAddress != "192.168.1.3" {
+		t.Errorf("GetOrAllocateIP() = %q, want 192.168.1.3 because 192.168.1.2 is reserved in UniFi", got.IPAddress)
+	}
+}
+
+// TestAPIClient_GetOrAllocateIP_MovesKnownClientIntoPool covers a MAC UniFi
+// already knows (a real device) whose reservation is outside the pool, or which
+// has none. It must get an address from the pool written onto its existing
+// record: a second record for a known MAC is exactly what UniFi rejects.
+func TestAPIClient_GetOrAllocateIP_MovesKnownClientIntoPool(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing unifi.Client
+	}{
+		{
+			name: "reservation outside the pool",
+			existing: unifi.Client{
+				ID: "u1", MAC: "f4:4d:30:6f:a7:93", Name: "talos-10-1-40-21",
+				FixedIP: "10.1.40.21", UseFixedIP: true,
+			},
+		},
+		{
+			name:     "no reservation",
+			existing: unifi.Client{ID: "u1", MAC: "f4:4d:30:6f:a7:93", Name: "talos-10-1-40-21"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeController{networks: testNetworks(), clients: []unifi.Client{tt.existing}}
+			c := f.start(t)
+
+			got, err := c.GetOrAllocateIP(context.Background(), testPool(), nil,
+				"net-1", "f4:4d:30:6f:a7:93", "host-1", nil)
+			if err != nil {
+				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+			}
+
+			want := &IPAllocation{
+				IPAddress:  "192.168.1.2",
+				MacAddress: "f4:4d:30:6f:a7:93",
+				UseFixedIP: true,
+				Prefix:     24,
+				Gateway:    "192.168.1.1",
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("GetOrAllocateIP() = %+v, want %+v", got, want)
+			}
+			if len(f.created) != 0 {
+				t.Errorf("expected no client to be created for a known MAC, got %d", len(f.created))
+			}
+
+			// The pool address lands on the existing record; everything else on
+			// it, the user's alias included, is left as it was.
+			wantRecord := tt.existing
+			wantRecord.FixedIP = "192.168.1.2"
+			wantRecord.UseFixedIP = true
+			wantRecord.NetworkID = "net-1"
+			if !reflect.DeepEqual(f.updated, []unifi.Client{wantRecord}) {
+				t.Errorf("updated records = %+v, want exactly %+v", f.updated, wantRecord)
+			}
+		})
+	}
+}
+
+func newTestClaim(name string, annotations map[string]string) *ipamv1beta2.IPAddressClaim {
+	return &ipamv1beta2.IPAddressClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations},
+	}
+}
+
+func TestMACForClaim_Annotated(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name:        "uses the provider annotation, normalized to lower case",
+			annotations: map[string]string{v1beta2.MACAddressAnnotation: "F4:4D:30:6F:A7:93"},
+			want:        "f4:4d:30:6f:a7:93",
+		},
+		{
+			name:        "recognizes the CAPT annotation",
+			annotations: map[string]string{"capt.tinkerbell.org/mac-address": "b8:ae:ed:76:79:61"},
+			want:        "b8:ae:ed:76:79:61",
+		},
+		{
+			name:        "rejects an annotation that is not a MAC",
+			annotations: map[string]string{v1beta2.MACAddressAnnotation: "not-a-mac"},
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MACForClaim(newTestClaim("c", tt.annotations))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("MACForClaim() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("MACForClaim() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMACForClaim_DerivesWhenUnannotated pins the fallback: a stable, valid,
+// locally administered MAC that differs between claims. The two names here have
+// the same length, which is exactly what made the old length-based scheme hand
+// both nodes the same MAC.
+func TestMACForClaim_DerivesWhenUnannotated(t *testing.T) {
+	a, err := MACForClaim(newTestClaim("discovery-f4-4d-30-6f-a7-93-talos-nodes", nil))
+	if err != nil {
+		t.Fatalf("MACForClaim() unexpected error = %v", err)
+	}
+	b, _ := MACForClaim(newTestClaim("discovery-b8-ae-ed-76-79-61-talos-nodes", nil))
+	again, _ := MACForClaim(newTestClaim("discovery-f4-4d-30-6f-a7-93-talos-nodes", nil))
+
+	if a == b {
+		t.Errorf("two claims of equal name length derived the same MAC %q", a)
+	}
+	if a != again {
+		t.Errorf("MACForClaim() is not deterministic: %q then %q", a, again)
+	}
+	if !strings.HasPrefix(a, "02:") {
+		t.Errorf("MACForClaim() = %q, want a locally administered 02: prefix", a)
+	}
+	if _, err := net.ParseMAC(a); err != nil {
+		t.Errorf("MACForClaim() = %q is not a valid MAC: %v", a, err)
 	}
 }

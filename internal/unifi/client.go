@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 
 	"github.com/ubiquiti-community/go-unifi/unifi"
@@ -210,15 +211,15 @@ func (c *APIClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v
 	return subnetSpec, nil
 }
 
-// GetOrAllocateIP gets an existing IP or allocates a new one.
+// GetOrAllocateIP returns the pool address reserved for macAddress in UniFi,
+// reserving one first if needed. A MAC UniFi already knows (a real device) whose
+// reservation lies in the pool keeps it; one with no reservation, or one outside
+// the pool, has a pool address written onto its existing record. Only an unknown
+// MAC gets a new record: UniFi rejects a second record for a known MAC.
 func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, networkID, macAddress, hostname string, addressesInUse []ipamv1beta2.IPAddress) (*IPAllocation, error) {
-	// First, check if this MAC already has a fixed IP assignment via Client object.
 	existingClient, err := c.api.GetClientByMAC(ctx, c.site, macAddress)
-	if err == nil && existingClient != nil {
-		return allocationFromExistingClient(pool, existingClient), nil
-	}
 
-	// A NotFoundError means this MAC simply has no assignment yet -- the normal
+	// A NotFoundError means this MAC simply has no record yet -- the normal
 	// first-allocation case -- so fall through and allocate. Any other error
 	// (auth, transport) says nothing about whether the MAC is assigned, so it
 	// must be propagated rather than mistaken for "unassigned": allocating on
@@ -231,49 +232,59 @@ func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, c
 		return nil, fmt.Errorf("failed to check existing client: %w", err)
 	}
 
-	// Get the network configuration.
-	network, err := c.GetNetwork(ctx, networkID)
-	if err != nil {
-		return nil, err
+	if existingClient != nil && clientHoldsPoolAddress(pool, existingClient) {
+		return allocationFromExistingClient(pool, existingClient), nil
 	}
 
-	// Allocate the next available IP using 3-level priority algorithm.
-	allocatedIP, prefix, gateway, err := c.allocateNextIP(ctx, pool, claim, network, addressesInUse)
+	allocatedIP, prefix, gateway, err := c.allocateNextIP(ctx, pool, claim, macAddress, addressesInUse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate IP: %w", err)
 	}
 
-	// Create a Client object with fixed IP assignment.
-	newClient := &unifi.Client{
-		MAC:        macAddress,
-		FixedIP:    allocatedIP,
-		Hostname:   hostname,
-		UseFixedIP: true,
-		NetworkID:  networkID,
+	var record *unifi.Client
+	if existingClient != nil {
+		existingClient.FixedIP = allocatedIP
+		existingClient.UseFixedIP = true
+		existingClient.NetworkID = networkID
+		record, err = c.api.UpdateClient(ctx, c.site, existingClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update client %s with fixed IP: %w", macAddress, err)
+		}
+	} else {
+		record, err = c.api.CreateClient(ctx, c.site, &unifi.Client{
+			MAC:        macAddress,
+			FixedIP:    allocatedIP,
+			Hostname:   hostname,
+			UseFixedIP: true,
+			NetworkID:  networkID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create client with fixed IP: %w", err)
+		}
 	}
 
-	// Create the client in Unifi controller.
-	createdClient, err := c.api.CreateClient(ctx, c.site, newClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create client with fixed IP: %w", err)
-	}
-
-	// Return the allocation with metadata.
 	return &IPAllocation{
-		IPAddress:  createdClient.FixedIP,
-		MacAddress: createdClient.MAC,
-		Hostname:   createdClient.Hostname,
-		UseFixedIP: createdClient.UseFixedIP,
+		IPAddress:  record.FixedIP,
+		MacAddress: record.MAC,
+		Hostname:   record.Hostname,
+		UseFixedIP: record.UseFixedIP,
 		Prefix:     prefix,
 		Gateway:    gateway,
 	}, nil
+}
+
+// clientHoldsPoolAddress reports whether client already has a fixed IP inside
+// one of pool's subnets, i.e. a reservation this pool can simply hand back.
+func clientHoldsPoolAddress(pool *v1beta2.IPPool, client *unifi.Client) bool {
+	return client.UseFixedIP && client.FixedIP != "" &&
+		poolutil.IPInSubnets(client.FixedIP, pool.Spec.Subnets, defaultPrefixFor(pool))
 }
 
 // allocateNextIP finds the next available IP using 3-level priority algorithm:
 // 1. PreAllocations (static assignment or IP reuse)
 // 2. Annotation request (claim specifies desired IP)
 // 3. Dynamic allocation (iterate through subnets)
-func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
+func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, macAddress string, addressesInUse []ipamv1beta2.IPAddress) (string, int32, string, error) {
 	if pool == nil {
 		return "", 0, "", fmt.Errorf("pool is nil")
 	}
@@ -282,7 +293,7 @@ func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, cl
 	}
 	defaultPrefix := defaultPrefixFor(pool)
 
-	ip, prefix, gateway, ok, err := c.allocateFromPreAllocation(ctx, pool, claim, network, addressesInUse, defaultPrefix)
+	ip, prefix, gateway, ok, err := c.allocateFromPreAllocation(ctx, pool, claim, macAddress, addressesInUse, defaultPrefix)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -290,7 +301,7 @@ func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, cl
 		return ip, prefix, gateway, nil
 	}
 
-	ip, prefix, gateway, ok, err = c.allocateFromAnnotation(ctx, pool, claim, network, addressesInUse, defaultPrefix)
+	ip, prefix, gateway, ok, err = c.allocateFromAnnotation(ctx, pool, claim, addressesInUse, defaultPrefix)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -298,13 +309,13 @@ func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, cl
 		return ip, prefix, gateway, nil
 	}
 
-	return c.allocateDynamic(ctx, pool, network, addressesInUse, defaultPrefix)
+	return c.allocateDynamic(ctx, pool, addressesInUse, defaultPrefix)
 }
 
 // allocateFromPreAllocation honors an explicit pool.Spec.PreAllocations entry for
 // claim, if one exists. ok is false (with a nil error) when no entry applies, so
 // the caller falls through to the next allocation priority.
-func (c *APIClient) allocateFromPreAllocation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
+func (c *APIClient) allocateFromPreAllocation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, macAddress string, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
 	if pool.Spec.PreAllocations == nil || claim == nil {
 		return "", 0, "", false, nil
 	}
@@ -319,7 +330,7 @@ func (c *APIClient) allocateFromPreAllocation(ctx context.Context, pool *v1beta2
 	if err := preAllocationConflict(addressesInUse, prealloc, claim.Name); err != nil {
 		return "", 0, "", false, err
 	}
-	if err := c.checkUnifiPreAllocationConflict(ctx, network.ID, prealloc, claim.Name); err != nil {
+	if err := c.checkUnifiPreAllocationConflict(ctx, prealloc, macAddress); err != nil {
 		return "", 0, "", false, err
 	}
 
@@ -330,7 +341,7 @@ func (c *APIClient) allocateFromPreAllocation(ctx context.Context, pool *v1beta2
 // allocateFromAnnotation honors claim's "ipAddress" annotation, if set. ok is
 // false (with a nil error) when the claim has no such request, so the caller
 // falls through to dynamic allocation.
-func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
+func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IPPool, claim *ipamv1beta2.IPAddressClaim, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (ip string, prefix int32, gateway string, ok bool, err error) {
 	if claim == nil || claim.Annotations == nil {
 		return "", 0, "", false, nil
 	}
@@ -345,7 +356,7 @@ func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IP
 	if err := requestedIPConflict(addressesInUse, requestedIP); err != nil {
 		return "", 0, "", false, err
 	}
-	if err := c.checkUnifiRequestedIPConflict(ctx, network.ID, requestedIP); err != nil {
+	if err := c.checkUnifiRequestedIPConflict(ctx, requestedIP); err != nil {
 		return "", 0, "", false, err
 	}
 
@@ -355,13 +366,13 @@ func (c *APIClient) allocateFromAnnotation(ctx context.Context, pool *v1beta2.IP
 
 // allocateDynamic picks the first free IP across pool's subnets, skipping each
 // subnet's gateway and any IP already recorded in-use by CAPI or Unifi.
-func (c *APIClient) allocateDynamic(ctx context.Context, pool *v1beta2.IPPool, network *unifi.Network, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (string, int32, string, error) {
+func (c *APIClient) allocateDynamic(ctx context.Context, pool *v1beta2.IPPool, addressesInUse []ipamv1beta2.IPAddress, defaultPrefix int32) (string, int32, string, error) {
 	allocatedIPs := make(map[string]bool, len(addressesInUse))
 	for _, addr := range addressesInUse {
 		allocatedIPs[addr.Spec.Address] = true
 	}
 
-	staticAssignments, err := c.GetStaticAssignments(ctx, network.ID)
+	staticAssignments, err := c.GetStaticAssignments(ctx)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("failed to get Unifi static assignments: %w", err)
 	}
@@ -425,14 +436,13 @@ func requestedIPConflict(addressesInUse []ipamv1beta2.IPAddress, requestedIP str
 }
 
 // checkUnifiPreAllocationConflict reports whether prealloc is already a static
-// assignment in Unifi under a MAC other than the one generated for claimName
-// (which would mean it's a previous allocation for the same claim being reused).
-func (c *APIClient) checkUnifiPreAllocationConflict(ctx context.Context, networkID, prealloc, claimName string) error {
-	staticAssignments, err := c.GetStaticAssignments(ctx, networkID)
+// assignment in Unifi under a MAC other than the claim's own (its own would
+// mean a previous allocation for the same claim being reused).
+func (c *APIClient) checkUnifiPreAllocationConflict(ctx context.Context, prealloc, macAddress string) error {
+	staticAssignments, err := c.GetStaticAssignments(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check Unifi static assignments: %w", err)
 	}
-	macAddress := generateMACForClaim(claimName)
 	for _, sa := range staticAssignments {
 		if sa.IP != prealloc || sa.MAC == macAddress {
 			continue
@@ -444,8 +454,8 @@ func (c *APIClient) checkUnifiPreAllocationConflict(ctx context.Context, network
 
 // checkUnifiRequestedIPConflict reports whether requestedIP is already a static
 // assignment in Unifi.
-func (c *APIClient) checkUnifiRequestedIPConflict(ctx context.Context, networkID, requestedIP string) error {
-	staticAssignments, err := c.GetStaticAssignments(ctx, networkID)
+func (c *APIClient) checkUnifiRequestedIPConflict(ctx context.Context, requestedIP string) error {
+	staticAssignments, err := c.GetStaticAssignments(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check Unifi static assignments: %w", err)
 	}
@@ -526,6 +536,32 @@ func subnetContainsAddr(subnet v1beta2.SubnetSpec, addr netip.Addr) bool {
 	return false
 }
 
+// captMACAddressAnnotation is what cluster-api-provider-tinkerbell puts on the
+// claims it creates, carrying the Hardware interface's MAC.
+const captMACAddressAnnotation = "capt.tinkerbell.org/mac-address"
+
+// MACForClaim returns the MAC the claim's UniFi reservation belongs on: the
+// device's own MAC when the claim is annotated with one, otherwise a
+// deterministic locally administered MAC derived from the claim name so the
+// reservation still has a stable owner that cannot collide with another claim's.
+func MACForClaim(claim *ipamv1beta2.IPAddressClaim) (string, error) {
+	for _, key := range []string{v1beta2.MACAddressAnnotation, captMACAddressAnnotation} {
+		raw := claim.Annotations[key]
+		if raw == "" {
+			continue
+		}
+		hw, err := net.ParseMAC(raw)
+		if err != nil {
+			return "", fmt.Errorf("annotation %s on claim %s is not a MAC address: %w", key, claim.Name, err)
+		}
+		if len(hw) != 6 {
+			return "", fmt.Errorf("annotation %s on claim %s is not a 48-bit MAC address: %q", key, claim.Name, raw)
+		}
+		return hw.String(), nil
+	}
+	return generateMACForClaim(claim.Name), nil
+}
+
 // generateMACForClaim generates a deterministic MAC address for a claim name.
 // Uses SHA256 to avoid collisions that would occur with simple length-based hashing.
 func generateMACForClaim(claimName string) string {
@@ -559,10 +595,15 @@ type StaticAssignment struct {
 	Hostname string
 }
 
-// GetStaticAssignments retrieves all static DHCP assignments for a network.
-// This queries all Unifi Client objects with fixed IPs in the specified network.
-func (c *APIClient) GetStaticAssignments(ctx context.Context, networkID string) ([]StaticAssignment, error) {
-	// List all clients with fixed IP assignments
+// GetStaticAssignments retrieves every fixed-IP reservation on the site.
+//
+// It deliberately does not filter by network: a reservation made from the UniFi
+// UI carries no network_id at all, yet the controller still enforces it
+// site-wide (api.err.DuplicateFixedIP on any second record with the same IP).
+// Reservations in other networks never match a pool address, so including
+// them costs nothing; excluding them is what made the allocator hand out
+// addresses UniFi then refused.
+func (c *APIClient) GetStaticAssignments(ctx context.Context) ([]StaticAssignment, error) {
 	clients, err := c.api.ListClient(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list clients: %w", err)
@@ -571,8 +612,7 @@ func (c *APIClient) GetStaticAssignments(ctx context.Context, networkID string) 
 	assignments := make([]StaticAssignment, 0)
 	for i := range clients {
 		client := &clients[i]
-		// Filter by network and fixed IP
-		if client.NetworkID == networkID && client.UseFixedIP && client.FixedIP != "" {
+		if client.UseFixedIP && client.FixedIP != "" {
 			assignments = append(assignments, StaticAssignment{
 				IP:       client.FixedIP,
 				MAC:      client.MAC,
