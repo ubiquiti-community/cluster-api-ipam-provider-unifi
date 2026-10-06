@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/go-logr/logr v1.4.4
 	github.com/pkg/errors v0.9.1
-	github.com/ubiquiti-community/go-unifi v1.34.1
+	github.com/ubiquiti-community/go-unifi v1.36.0
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
