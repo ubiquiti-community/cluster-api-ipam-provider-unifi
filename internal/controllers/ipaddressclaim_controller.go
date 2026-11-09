@@ -256,20 +256,20 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 		return nil, err
 	}
 
-	// Use network ID from pool (either configured or discovered)
-	networkID := h.pool.Spec.NetworkID //nolint:staticcheck // this is the auto-discovery fallback the field's deprecation notice describes
-	if networkID == "" {
-		networkID = h.pool.Status.DiscoveredNetworkID
-	}
-	if networkID == "" {
-		return nil, fmt.Errorf("no network ID available (neither configured nor discovered)")
+	// The pool's network, discovered again if the controller no longer knows the
+	// one the pool discovered; the pool controller records it on its next sync.
+	// Allocating with a network ID the controller has dropped would fail, or
+	// write that dead ID onto the client's record.
+	network, err := unifiClient.ResolvePoolNetwork(ctx, h.pool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve the pool's Unifi network: %w", err)
 	}
 
 	allocation, err := unifiClient.GetOrAllocateIP(
 		ctx,
 		h.pool,
 		h.claim,
-		networkID,
+		network.ID,
 		macAddress,
 		hostname,
 		addressesInUse,

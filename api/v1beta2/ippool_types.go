@@ -122,7 +122,9 @@ type IPPoolStatus struct {
 	Allocations map[string]string `json:"allocations,omitempty"`
 
 	// DiscoveredNetworkID is the auto-discovered Unifi network ID
-	// Populated by matching configured subnets to Unifi network ranges
+	// Populated by matching configured subnets to Unifi network ranges.
+	// Discovered again when the controller no longer has a network with this ID,
+	// as after UniFi Network 11 re-keyed every network to a UUID.
 	// +optional
 	DiscoveredNetworkID string `json:"discoveredNetworkID,omitempty"`
 

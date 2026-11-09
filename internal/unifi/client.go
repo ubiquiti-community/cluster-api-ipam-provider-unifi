@@ -117,31 +117,135 @@ func (c *APIClient) ValidateCredentials(ctx context.Context) error {
 	return nil
 }
 
-// GetNetwork retrieves network information by ID.
+// ErrNetworkNotFound is returned when the UniFi controller has no network with
+// the requested ID. IDs do not survive every controller upgrade: UniFi Network
+// 11 re-keyed every network from a MongoDB ObjectID to a UUID.
+var ErrNetworkNotFound = errors.New("network not found")
+
+// GetNetwork retrieves network information by ID. An ID the controller does not
+// know returns an error wrapping ErrNetworkNotFound.
 func (c *APIClient) GetNetwork(ctx context.Context, networkID string) (*unifi.Network, error) {
 	networks, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
 
+	if network := networkByID(networks, networkID); network != nil {
+		return network, nil
+	}
+
+	return nil, fmt.Errorf("network %s: %w", networkID, ErrNetworkNotFound)
+}
+
+func networkByID(networks []unifi.Network, networkID string) *unifi.Network {
 	for i := range networks {
 		if networks[i].ID == networkID {
-			return &networks[i], nil
+			return &networks[i]
+		}
+	}
+	return nil
+}
+
+// ResolvePoolNetwork returns the UniFi network pool allocates from: the one
+// spec.networkID names; else the one discovered before, status.discoveredNetworkID;
+// else the network whose subnet contains the pool's first subnet. A discovered
+// network that no longer exists is discovered again, so a pool survives the
+// controller re-keying its networks. A configured one that no longer exists is
+// an error wrapping ErrNetworkNotFound: the configuration is the user's to fix.
+func (c *APIClient) ResolvePoolNetwork(ctx context.Context, pool *v1beta2.IPPool) (*unifi.Network, error) {
+	networks, err := c.api.ListNetwork(ctx, c.site)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	if configured := pool.Spec.NetworkID; configured != "" { //nolint:staticcheck // the configured network still takes precedence over discovery
+		if network := networkByID(networks, configured); network != nil {
+			return network, nil
+		}
+		return nil, fmt.Errorf("configured network %s: %w", configured, ErrNetworkNotFound)
+	}
+
+	discovered := pool.Status.DiscoveredNetworkID
+	if discovered != "" {
+		if network := networkByID(networks, discovered); network != nil {
+			return network, nil
 		}
 	}
 
-	return nil, fmt.Errorf("network %s not found", networkID)
+	subnet, err := DiscoverySubnet(pool)
+	if err != nil {
+		return nil, err
+	}
+	if network := networkContaining(networks, subnet); network != nil {
+		return network, nil
+	}
+	if discovered != "" {
+		return nil, fmt.Errorf("discovered network %s no longer exists and no UniFi network contains subnet %s: %w", discovered, subnet, ErrNetworkNotFound)
+	}
+	return nil, fmt.Errorf("no Unifi network found containing subnet %s", subnet)
+}
+
+// DiscoverySubnet returns the subnet a pool's network is discovered by: its
+// first subnet, as a CIDR. A Start/End range becomes the network of its start
+// address with the subnet's prefix (the pool's, or /24).
+func DiscoverySubnet(pool *v1beta2.IPPool) (netip.Prefix, error) {
+	if len(pool.Spec.Subnets) == 0 {
+		return netip.Prefix{}, fmt.Errorf("no subnets configured in pool")
+	}
+
+	first := pool.Spec.Subnets[0]
+	if first.CIDR != "" {
+		prefix, err := netip.ParsePrefix(first.CIDR)
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("subnet must be a valid CIDR: %w", err)
+		}
+		return prefix, nil
+	}
+	if first.Start == "" {
+		return netip.Prefix{}, fmt.Errorf("cannot determine subnet CIDR for network discovery")
+	}
+
+	defaultPrefix := int32(24)
+	if pool.Spec.Prefix != nil {
+		defaultPrefix = *pool.Spec.Prefix
+	}
+	start, err := netip.ParseAddr(first.Start)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("invalid start address %s: %w", first.Start, err)
+	}
+	return netip.PrefixFrom(start, int(poolutil.GetPrefix(first, defaultPrefix))).Masked(), nil
+}
+
+// networkContaining returns the first network whose subnet contains all of subnet.
+func networkContaining(networks []unifi.Network, subnet netip.Prefix) *unifi.Network {
+	for i := range networks {
+		networkPrefix, err := netip.ParsePrefix(DerefString(networks[i].IPSubnet))
+		if err != nil {
+			continue
+		}
+		if networkPrefix.Contains(subnet.Addr()) && networkPrefix.Contains(lastAddrInPrefix(subnet)) {
+			return &networks[i]
+		}
+	}
+	return nil
 }
 
 // SyncNetworkToCIDR retrieves network configuration from Unifi and populates SubnetSpec.
 // This syncs the CIDR, gateway, and optionally calculates prefix and exclude ranges based on DHCP settings.
-//
-//nolint:cyclop // Network configuration sync requires multiple conditional checks
 func (c *APIClient) SyncNetworkToCIDR(ctx context.Context, networkID string) (*v1beta2.SubnetSpec, error) {
 	network, err := c.GetNetwork(ctx, networkID)
 	if err != nil {
 		return nil, err
 	}
+	return SubnetSpecForNetwork(network)
+}
+
+// SubnetSpecForNetwork describes network as a SubnetSpec: its CIDR, gateway and
+// prefix, the ranges outside its DHCP range, and its DNS servers.
+//
+//nolint:cyclop // Network configuration sync requires multiple conditional checks
+func SubnetSpecForNetwork(network *unifi.Network) (*v1beta2.SubnetSpec, error) {
+	networkID := network.ID
 
 	// go-unifi models these optional network settings as *string, where both a
 	// nil pointer and a pointer to "" mean "not configured".
@@ -240,7 +344,7 @@ func (c *APIClient) GetOrAllocateIP(ctx context.Context, pool *v1beta2.IPPool, c
 	}
 
 	if existingClient != nil && clientHoldsPoolAddress(pool, existingClient) {
-		return c.reuseExisting(ctx, pool, existingClient, hostname, dnsRecord)
+		return c.reuseExisting(ctx, pool, existingClient, networkID, hostname, dnsRecord)
 	}
 
 	allocatedIP, prefix, gateway, err := c.allocateNextIP(ctx, pool, claim, macAddress, addressesInUse)
@@ -283,9 +387,16 @@ func reservationRecord(existingClient *unifi.Client, claim *ipamv1beta2.IPAddres
 }
 
 // reuseExisting hands back the pool address existingClient already holds,
-// first writing the hostname onto the record if it isn't there yet.
-func (c *APIClient) reuseExisting(ctx context.Context, pool *v1beta2.IPPool, existingClient *unifi.Client, hostname, dnsRecord string) (*IPAllocation, error) {
-	if !applyHostname(existingClient, hostname, dnsRecord) {
+// first writing the hostname onto the record if it isn't there yet. A record
+// whose network is not the pool's -- one written with a network ID the
+// controller has since re-keyed -- is pointed at the pool's network. A record
+// with no network is left as the controller keeps it.
+func (c *APIClient) reuseExisting(ctx context.Context, pool *v1beta2.IPPool, existingClient *unifi.Client, networkID, hostname, dnsRecord string) (*IPAllocation, error) {
+	staleNetwork := existingClient.NetworkID != "" && existingClient.NetworkID != networkID
+	if staleNetwork {
+		existingClient.NetworkID = networkID
+	}
+	if !applyHostname(existingClient, hostname, dnsRecord) && !staleNetwork {
 		return allocationFromExistingClient(pool, existingClient), nil
 	}
 	written, err := c.writeClient(ctx, existingClient, false)
@@ -753,48 +864,19 @@ func (c *APIClient) DeleteStaticAssignment(ctx context.Context, networkID, macAd
 // FindNetworkForSubnet auto-discovers a Unifi network that contains the given subnet.
 // Returns the network if found, or an error if no matching network exists.
 func (c *APIClient) FindNetworkForSubnet(ctx context.Context, subnet string) (*unifi.Network, error) {
-	// Parse the subnet to check
-	var subnetPrefix netip.Prefix
-	var err error
-
-	// Try parsing as CIDR
-	subnetPrefix, err = netip.ParsePrefix(subnet)
+	subnetPrefix, err := netip.ParsePrefix(subnet)
 	if err != nil {
-		// Try parsing as IP range (we'll assume the whole range for simplicity)
 		return nil, fmt.Errorf("subnet must be a valid CIDR: %w", err)
 	}
 
-	// List all networks
 	networks, err := c.api.ListNetwork(ctx, c.site)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
 
-	// Find a network whose subnet contains the configured subnet
-	for i := range networks {
-		network := &networks[i]
-		ipSubnet := DerefString(network.IPSubnet)
-		if ipSubnet == "" {
-			continue
-		}
-
-		// Parse network's subnet
-		networkPrefix, err := netip.ParsePrefix(ipSubnet)
-		if err != nil {
-			continue
-		}
-
-		// Check if network contains the pool subnet
-		// For a network to contain a subnet, the subnet must be within the network's range
-		if networkPrefix.Contains(subnetPrefix.Addr()) {
-			// Also verify the subnet doesn't exceed the network range
-			subnetEnd := lastAddrInPrefix(subnetPrefix)
-			if networkPrefix.Contains(subnetEnd) {
-				return network, nil
-			}
-		}
+	if network := networkContaining(networks, subnetPrefix); network != nil {
+		return network, nil
 	}
-
 	return nil, fmt.Errorf("no Unifi network found containing subnet %s", subnet)
 }
 

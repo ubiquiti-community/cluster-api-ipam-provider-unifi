@@ -907,3 +907,183 @@ func TestAPIClient_GetOrAllocateIP_HostnameWithoutDomain(t *testing.T) {
 		t.Errorf("created records = %+v, want one with an enabled bare local DNS record talos-10-1-40-32", f.created)
 	}
 }
+
+// reKeyedNetworks is the network list after UniFi Network 11 re-keyed every
+// network from a MongoDB ObjectID to a UUID: the network a pool discovered as
+// oldNetworkID is still there, unchanged, as newNetworkID.
+const (
+	oldNetworkID = "6531fc98540608444132dd19"
+	newNetworkID = "1991ed24-36b6-49d8-b8c6-c5e2ed76990b"
+)
+
+func reKeyedNetworks() []unifi.Network {
+	return []unifi.Network{
+		{ID: "290302e1-7661-4340-a840-0dd2ec1a1c77", Purpose: unifi.PurposeCorporate, IPSubnet: new("10.0.0.1/16")},
+		{ID: newNetworkID, Purpose: unifi.PurposeCorporate, IPSubnet: new("10.1.0.1/16"), Name: new("Internal")},
+	}
+}
+
+// reKeyedPool is a pool like the one that broke: a Start/End range with a /16
+// prefix, which discovered the old ID.
+func reKeyedPool() *v1beta2.IPPool {
+	prefix := int32(16)
+	return &v1beta2.IPPool{
+		Spec: v1beta2.IPPoolSpec{
+			Subnets: []v1beta2.SubnetSpec{{Start: "10.1.40.32", End: "10.1.40.62"}},
+			Prefix:  &prefix,
+			Gateway: "10.1.0.1",
+		},
+		Status: v1beta2.IPPoolStatus{DiscoveredNetworkID: oldNetworkID},
+	}
+}
+
+func TestAPIClient_GetNetwork_UnknownIDIsNotFound(t *testing.T) {
+	c := (&fakeController{networks: reKeyedNetworks()}).start(t)
+
+	_, err := c.GetNetwork(context.Background(), oldNetworkID)
+	if !errors.Is(err, ErrNetworkNotFound) {
+		t.Fatalf("GetNetwork(%s) error = %v, want ErrNetworkNotFound", oldNetworkID, err)
+	}
+}
+
+func TestAPIClient_ResolvePoolNetwork(t *testing.T) {
+	tests := []struct {
+		name    string
+		pool    func() *v1beta2.IPPool
+		want    string
+		wantErr error
+	}{
+		{
+			name: "discovered network still exists",
+			pool: func() *v1beta2.IPPool {
+				p := reKeyedPool()
+				p.Status.DiscoveredNetworkID = newNetworkID
+				return p
+			},
+			want: newNetworkID,
+		},
+		{
+			name: "discovered network was re-keyed: discovered again by subnet",
+			pool: reKeyedPool,
+			want: newNetworkID,
+		},
+		{
+			name: "nothing discovered yet",
+			pool: func() *v1beta2.IPPool {
+				p := reKeyedPool()
+				p.Status.DiscoveredNetworkID = ""
+				return p
+			},
+			want: newNetworkID,
+		},
+		{
+			name: "configured network wins over discovery",
+			pool: func() *v1beta2.IPPool {
+				p := reKeyedPool()
+				p.Spec.NetworkID = "290302e1-7661-4340-a840-0dd2ec1a1c77" //nolint:staticcheck // the deprecated field is still honored
+				return p
+			},
+			want: "290302e1-7661-4340-a840-0dd2ec1a1c77",
+		},
+		{
+			name: "configured network gone: an error, not rediscovered",
+			pool: func() *v1beta2.IPPool {
+				p := reKeyedPool()
+				p.Spec.NetworkID = oldNetworkID //nolint:staticcheck // the deprecated field is still honored
+				return p
+			},
+			wantErr: ErrNetworkNotFound,
+		},
+		{
+			name: "discovered network gone and no network contains the pool",
+			pool: func() *v1beta2.IPPool {
+				p := reKeyedPool()
+				p.Spec.Subnets = []v1beta2.SubnetSpec{{CIDR: "172.16.0.0/24"}}
+				return p
+			},
+			wantErr: ErrNetworkNotFound,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := (&fakeController{networks: reKeyedNetworks()}).start(t)
+
+			got, err := c.ResolvePoolNetwork(context.Background(), tt.pool())
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("ResolvePoolNetwork() error = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolvePoolNetwork() unexpected error = %v", err)
+			}
+			if got.ID != tt.want {
+				t.Errorf("ResolvePoolNetwork() = %s, want %s", got.ID, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiscoverySubnet(t *testing.T) {
+	got, err := DiscoverySubnet(reKeyedPool())
+	if err != nil {
+		t.Fatalf("DiscoverySubnet() unexpected error = %v", err)
+	}
+	if got.String() != "10.1.0.0/16" {
+		t.Errorf("DiscoverySubnet() = %s, want 10.1.0.0/16", got)
+	}
+}
+
+// TestAPIClient_GetOrAllocateIP_RepairsStaleNetworkID covers a record that
+// already holds its pool address but names a network the controller no longer
+// has, as the provider wrote while it still used the pre-upgrade ID: reusing it
+// points it at the pool's network. A record with no network, as the UniFi UI
+// writes them, is left alone.
+func TestAPIClient_GetOrAllocateIP_RepairsStaleNetworkID(t *testing.T) {
+	tests := []struct {
+		name       string
+		networkID  string
+		wantUpdate bool
+	}{
+		{name: "stale network ID", networkID: oldNetworkID, wantUpdate: true},
+		{name: "pool's network ID", networkID: newNetworkID},
+		{name: "no network ID", networkID: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeController{
+				networks: reKeyedNetworks(),
+				clients: []unifi.Client{{
+					ID:         "client-1",
+					MAC:        "9c:6b:00:70:59:8a",
+					FixedIP:    "10.1.40.37",
+					UseFixedIP: true,
+					NetworkID:  tt.networkID,
+				}},
+			}
+			c := f.start(t)
+
+			got, err := c.GetOrAllocateIP(context.Background(), reKeyedPool(), nil,
+				newNetworkID, "9c:6b:00:70:59:8a", "", nil)
+			if err != nil {
+				t.Fatalf("GetOrAllocateIP() unexpected error = %v", err)
+			}
+			if got.IPAddress != "10.1.40.37" {
+				t.Errorf("GetOrAllocateIP() = %s, want the record's 10.1.40.37", got.IPAddress)
+			}
+			if len(f.created) != 0 {
+				t.Errorf("created %d records, want none", len(f.created))
+			}
+			if !tt.wantUpdate {
+				if len(f.updated) != 0 {
+					t.Errorf("updated the record: %+v", f.updated)
+				}
+				return
+			}
+			if len(f.updated) != 1 || f.updated[0].NetworkID != newNetworkID || f.updated[0].FixedIP != "10.1.40.37" {
+				t.Errorf("updates = %+v, want one update pointing the record at %s and keeping its address", f.updated, newNetworkID)
+			}
+		})
+	}
+}
