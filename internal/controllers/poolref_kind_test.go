@@ -220,3 +220,24 @@ func TestIPPoolReconciler_handleDeletion_CountsServedKind(t *testing.T) {
 		})
 	}
 }
+
+// TestProviderAdapter_ServesClaim pins the filter the claim reconciler applies
+// to every claim it is handed, whichever watch enqueued it: only claims naming
+// the served kind in the served group are this provider's.
+func TestProviderAdapter_ServesClaim(t *testing.T) {
+	adapter := &UnifiProviderAdapter{}
+	tests := []struct {
+		claim *ipamv1beta2.IPAddressClaim
+		want  bool
+	}{
+		{claimReferencing("current-claim", v1beta2.IPPoolKind), true},
+		{claimReferencing("legacy-kind-claim", legacyPoolKind), false},
+		{claimReferencingGroup("other-group-claim", v1beta2.IPPoolKind, legacyPoolGroup), false},
+		{claimReferencingGroup("in-cluster-claim", "InClusterIPPool", "ipam.cluster.x-k8s.io"), false},
+	}
+	for _, tt := range tests {
+		if got := adapter.ServesClaim(tt.claim); got != tt.want {
+			t.Errorf("ServesClaim(%s) = %v, want %v", tt.claim.Name, got, tt.want)
+		}
+	}
+}

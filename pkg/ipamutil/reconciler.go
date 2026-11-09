@@ -81,6 +81,15 @@ type ClaimHandler interface {
 	ReleaseAddress(ctx context.Context) (*ctrl.Result, error)
 }
 
+// ClaimFilter is implemented by a ProviderAdapter that serves only some claims,
+// typically those whose pool is of the provider's own kind. The reconciler
+// watches every claim, and without a filter it would take on claims other IPAM
+// providers serve.
+type ClaimFilter interface {
+	// ServesClaim reports whether the provider allocates for claim.
+	ServesClaim(claim *ipamv1beta2.IPAddressClaim) bool
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClaimReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if r.Adapter == nil {
@@ -139,17 +148,35 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ct
 		}
 	}()
 
+	return r.reconcileClaim(ctx, claim)
+}
+
+// reconcileClaim acts on a fetched claim; Reconcile patches whatever it changes.
+func (r *ClaimReconciler) reconcileClaim(ctx context.Context, claim *ipamv1beta2.IPAddressClaim) (ctrl.Result, error) {
+	if filter, ok := r.Adapter.(ClaimFilter); ok && !filter.ServesClaim(claim) {
+		// Another provider's claim. Earlier versions put the release finalizer on
+		// every claim; take it off so the claim's own provider can delete it.
+		controllerutil.RemoveFinalizer(claim, ReleaseAddressFinalizer)
+		return ctrl.Result{}, nil
+	}
+
+	if !claim.DeletionTimestamp.IsZero() {
+		// Without the release finalizer the claim was released already, or was
+		// never ours. The API server forbids adding a finalizer to an object
+		// being deleted, and whatever else holds the claim, or any address left
+		// with it, is not ours to touch.
+		if !controllerutil.ContainsFinalizer(claim, ReleaseAddressFinalizer) {
+			return ctrl.Result{}, nil
+		}
+
+		return r.reconcileDelete(ctx, claim, r.Adapter.ClaimHandlerFor(r.Client, claim))
+	}
+
 	if controllerutil.AddFinalizer(claim, ReleaseAddressFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
-	handler := r.Adapter.ClaimHandlerFor(r.Client, claim)
-
-	if !claim.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, claim, handler)
-	}
-
-	return r.reconcileNormal(ctx, claim, handler)
+	return r.reconcileNormal(ctx, claim, r.Adapter.ClaimHandlerFor(r.Client, claim))
 }
 
 func (r *ClaimReconciler) checkClusterPaused(ctx context.Context, claim *ipamv1beta2.IPAddressClaim) (*ctrl.Result, error) {

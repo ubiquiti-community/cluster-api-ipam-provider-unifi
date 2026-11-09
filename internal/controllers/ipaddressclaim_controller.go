@@ -53,7 +53,10 @@ type UnifiProviderAdapter struct {
 	client.Client
 }
 
-var _ ipamutil.ProviderAdapter = &UnifiProviderAdapter{}
+var (
+	_ ipamutil.ProviderAdapter = &UnifiProviderAdapter{}
+	_ ipamutil.ClaimFilter     = &UnifiProviderAdapter{}
+)
 
 // UnifiClaimHandler implements the ipamutil.ClaimHandler interface.
 type UnifiClaimHandler struct {
@@ -118,6 +121,14 @@ func (a *UnifiProviderAdapter) ipPoolToIPClaims(ctx context.Context, obj client.
 	}
 
 	return requests
+}
+
+// ServesClaim implements ipamutil.ClaimFilter: the provider allocates for
+// claims whose pool is one of its IPPools, and leaves every other claim to the
+// provider that serves its pool.
+func (a *UnifiProviderAdapter) ServesClaim(claim *ipamv1beta2.IPAddressClaim) bool {
+	return claim.Spec.PoolRef.Kind == v1beta2.IPPoolKind &&
+		claim.Spec.PoolRef.APIGroup == v1beta2.GroupVersion.Group
 }
 
 // ClaimHandlerFor returns a ClaimHandler for the given claim.
