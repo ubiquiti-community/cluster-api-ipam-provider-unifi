@@ -259,16 +259,23 @@ func SubnetSpecForNetwork(network *unifi.Network) (*v1beta2.SubnetSpec, error) {
 		return nil, fmt.Errorf("network %s has no IP subnet configured", networkID)
 	}
 
-	subnetSpec := &v1beta2.SubnetSpec{
-		CIDR: ipSubnet,
+	routerPrefix, err := netip.ParsePrefix(ipSubnet)
+	if err != nil {
+		return nil, fmt.Errorf("network %s has an invalid IP subnet %q: %w", networkID, ipSubnet, err)
 	}
 
-	// Extract gateway - prefer DHCPDGateway if set, otherwise calculate from CIDR
+	// UniFi's ip_subnet is the router's own address with the network's prefix
+	// length, e.g. 10.1.0.1/16, so the network is its masked form.
+	subnetSpec := &v1beta2.SubnetSpec{
+		CIDR: routerPrefix.Masked().String(),
+	}
+
+	// The gateway DHCP clients get: the DHCP gateway override when enabled,
+	// otherwise the router itself.
 	if dhcpdGateway != "" && network.DHCPDGatewayEnabled {
 		subnetSpec.Gateway = dhcpdGateway
 	} else {
-		// Calculate gateway from CIDR (typically .1 of the subnet)
-		gateway, err := calculateGatewayFromCIDR(ipSubnet)
+		gateway, err := gatewayFromIPSubnet(routerPrefix)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate gateway: %w", err)
 		}
@@ -460,7 +467,7 @@ func applyHostname(record *unifi.Client, hostname, dnsRecord string) bool {
 // one of pool's subnets, i.e. a reservation this pool can simply hand back.
 func clientHoldsPoolAddress(pool *v1beta2.IPPool, client *unifi.Client) bool {
 	return client.UseFixedIP && client.FixedIP != "" &&
-		poolutil.IPInSubnets(client.FixedIP, pool.Spec.Subnets, defaultPrefixFor(pool))
+		poolutil.IPInSubnets(client.FixedIP, pool.Spec.Subnets, DefaultPrefixFor(pool))
 }
 
 // allocateNextIP finds the next available IP using 3-level priority algorithm:
@@ -474,7 +481,7 @@ func (c *APIClient) allocateNextIP(ctx context.Context, pool *v1beta2.IPPool, cl
 	if len(pool.Spec.Subnets) == 0 {
 		return "", 0, "", fmt.Errorf("pool has no configured subnets")
 	}
-	defaultPrefix := defaultPrefixFor(pool)
+	defaultPrefix := DefaultPrefixFor(pool)
 
 	ip, prefix, gateway, ok, err := c.allocateFromPreAllocation(ctx, pool, claim, macAddress, addressesInUse, defaultPrefix)
 	if err != nil {
@@ -659,7 +666,7 @@ func (c *APIClient) checkUnifiRequestedIPConflict(ctx context.Context, requested
 // a fixed-IP Client in Unifi, resolving prefix/gateway from whichever pool subnet
 // contains the address.
 func allocationFromExistingClient(pool *v1beta2.IPPool, existingClient *unifi.Client) *IPAllocation {
-	defaultPrefix := defaultPrefixFor(pool)
+	defaultPrefix := DefaultPrefixFor(pool)
 	prefix, gateway := defaultPrefix, pool.Spec.Gateway
 	if _, err := netip.ParseAddr(existingClient.FixedIP); err == nil {
 		prefix, gateway = subnetMetadataForIP(pool, existingClient.FixedIP, defaultPrefix)
@@ -675,8 +682,8 @@ func allocationFromExistingClient(pool *v1beta2.IPPool, existingClient *unifi.Cl
 	}
 }
 
-// defaultPrefixFor returns pool's configured default prefix, falling back to /24.
-func defaultPrefixFor(pool *v1beta2.IPPool) int32 {
+// DefaultPrefixFor returns pool's configured default prefix, falling back to /24.
+func DefaultPrefixFor(pool *v1beta2.IPPool) int32 {
 	if pool.Spec.Prefix != nil && *pool.Spec.Prefix > 0 {
 		return *pool.Spec.Prefix
 	}
@@ -828,6 +835,44 @@ func (c *APIClient) GetStaticAssignments(ctx context.Context) ([]StaticAssignmen
 	return assignments, nil
 }
 
+// RepairReservationNetworks points the fixed-IP reservations of a pool's
+// addresses at networkID where they still name another network. UniFi Network
+// 11 re-keyed every network to a UUID, and a claim bound before that never
+// revisits its reservation, so the reservation kept the dead ID. reservations
+// maps a lower case MAC to the address its claim holds; only a record fixed to
+// that address is touched, and one with no network is left as UniFi keeps
+// reservations made from its UI. It returns the addresses it repaired.
+func (c *APIClient) RepairReservationNetworks(ctx context.Context, networkID string, reservations map[string]string) ([]string, error) {
+	if len(reservations) == 0 {
+		return nil, nil
+	}
+
+	clients, err := c.api.ListClient(ctx, c.site)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list clients: %w", err)
+	}
+
+	var repaired []string
+
+	for i := range clients {
+		record := &clients[i]
+
+		address, ok := reservations[strings.ToLower(record.MAC)]
+		if !ok || !record.UseFixedIP || record.FixedIP != address || record.NetworkID == "" || record.NetworkID == networkID {
+			continue
+		}
+
+		record.NetworkID = networkID
+		if _, err := c.writeClient(ctx, record, false); err != nil {
+			return repaired, err
+		}
+
+		repaired = append(repaired, address)
+	}
+
+	return repaired, nil
+}
+
 // CreateStaticAssignment creates a static DHCP assignment in Unifi.
 func (c *APIClient) CreateStaticAssignment(ctx context.Context, networkID, ip, macAddress, hostname string) error {
 	// Create or update Client object with fixed IP
@@ -908,26 +953,20 @@ func lastAddrInPrefix(prefix netip.Prefix) netip.Addr {
 
 // Helper functions for CIDR and network calculations
 
-// calculateGatewayFromCIDR extracts the first usable IP from a CIDR as the gateway.
-// Typically this is .1 for the subnet.
-func calculateGatewayFromCIDR(cidr string) (string, error) {
-	prefix, err := netip.ParsePrefix(cidr)
-	if err != nil {
-		return "", fmt.Errorf("invalid CIDR %s: %w", cidr, err)
-	}
-
-	// Get the network address and add 1 for the gateway
-	netAddr := prefix.Addr()
-	if !netAddr.Is4() {
+// gatewayFromIPSubnet returns the router address of a UniFi ip_subnet, which
+// UniFi writes as the router's address with the network's prefix length. A
+// subnet written as the bare network address falls back to its first address.
+func gatewayFromIPSubnet(ipSubnet netip.Prefix) (string, error) {
+	router := ipSubnet.Addr()
+	if !router.Is4() {
 		return "", fmt.Errorf("only IPv4 subnets are supported")
 	}
 
-	// Convert to 4-byte array and increment
-	octets := netAddr.As4()
-	octets[3]++ // Increment last octet for .1 address
+	if router != ipSubnet.Masked().Addr() {
+		return router.String(), nil
+	}
 
-	gateway := netip.AddrFrom4(octets)
-	return gateway.String(), nil
+	return router.Next().String(), nil
 }
 
 // extractPrefixFromCIDR returns the prefix length from a CIDR string.

@@ -19,6 +19,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -47,6 +49,10 @@ const (
 
 	// DefaultSyncInterval is how often to sync with Unifi controller.
 	DefaultSyncInterval = 10 * time.Minute
+
+	// MACAddressLabel records, on an IPAddress, the MAC its UniFi reservation
+	// was made on, with dashes for colons.
+	MACAddressLabel = "unifi.ipam.cluster.x-k8s.io/mac"
 
 	// Condition types for IPPool status.
 	ConditionNetworkSynced = "NetworkSynced"
@@ -122,7 +128,7 @@ func (r *IPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Perform periodic sync with Unifi to detect configuration drift
-	if err := r.syncWithUnifi(ctx, pool, instance, logger); err != nil {
+	if err := r.syncWithUnifi(ctx, pool, instance, addressesInUse, logger); err != nil {
 		logger.Error(err, "failed to sync with Unifi network")
 		// Don't fail reconciliation on sync errors, but log and continue
 		// The sync will be retried on the next reconciliation
@@ -352,7 +358,7 @@ func (r *IPPoolReconciler) ipAddressToIPPool(_ context.Context, obj client.Objec
 // This detects configuration drift and updates the pool's observed state.
 //
 //nolint:cyclop // Network sync logic requires multiple checks
-func (r *IPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.IPPool, instance *v1beta2.Instance, logger logr.Logger) error {
+func (r *IPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.IPPool, instance *v1beta2.Instance, addressesInUse []ipamv1beta2.IPAddress, logger logr.Logger) error {
 	// Import unifi client package
 	unifiClient, err := r.createUnifiClient(ctx, instance, pool.Namespace)
 	if err != nil {
@@ -422,10 +428,10 @@ func (r *IPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.IPPo
 	}
 
 	// Detect configuration drift
-	driftDetected := r.detectConfigurationDrift(pool, subnetSpec, logger)
+	drift := configurationDrift(pool, subnetSpec)
 
 	// Update sync condition
-	r.updateSyncCondition(pool, driftDetected, err)
+	r.updateSyncCondition(pool, drift, err)
 
 	// Update last sync time
 	now := metav1.Now()
@@ -435,41 +441,105 @@ func (r *IPPoolReconciler) syncWithUnifi(ctx context.Context, pool *v1beta2.IPPo
 		return fmt.Errorf("failed to update pool status: %w", err)
 	}
 
-	if driftDetected {
+	if len(drift) > 0 {
 		logger.Info("configuration drift detected between pool and Unifi network",
-			"pool_cidr", pool.Spec.Subnets[0].CIDR,
-			"unifi_cidr", subnetSpec.CIDR)
+			"network", subnetSpec.CIDR,
+			"gateway", subnetSpec.Gateway,
+			"differences", drift)
+	}
+
+	repaired, err := unifiClient.RepairReservationNetworks(ctx, network.ID, reservationsOf(addressesInUse))
+	if len(repaired) > 0 {
+		logger.Info("pointed reservations at the pool's Unifi network", "network_id", network.ID, "addresses", repaired)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to repair the network of the pool's reservations: %w", err)
 	}
 
 	return nil
 }
 
-// detectConfigurationDrift compares pool configuration with Unifi network state.
-func (r *IPPoolReconciler) detectConfigurationDrift(pool *v1beta2.IPPool, unifiSpec *v1beta2.SubnetSpec, logger logr.Logger) bool {
-	if len(pool.Spec.Subnets) == 0 {
-		return false
+// reservationsOf maps the MAC each address was reserved on, as the claim
+// controller labels it, to the address.
+func reservationsOf(addresses []ipamv1beta2.IPAddress) map[string]string {
+	reservations := make(map[string]string, len(addresses))
+	for _, address := range addresses {
+		if mac := address.Labels[MACAddressLabel]; mac != "" && address.Spec.Address != "" {
+			reservations[strings.ToLower(strings.ReplaceAll(mac, "-", ":"))] = address.Spec.Address
+		}
+	}
+	return reservations
+}
+
+// configurationDrift lists where the pool disagrees with the UniFi network:
+// an address outside the network, a prefix length other than the network's,
+// or a gateway other than the one UniFi hands to DHCP clients. Each subnet is
+// resolved the way allocation resolves it, so a subnet without its own
+// gateway or prefix is compared with the pool's. A pool without a gateway
+// hands out none, which is a choice rather than drift.
+func configurationDrift(pool *v1beta2.IPPool, network *v1beta2.SubnetSpec) []string {
+	networkPrefix, err := netip.ParsePrefix(network.CIDR)
+	if err != nil {
+		return []string{fmt.Sprintf("the Unifi network has an invalid subnet %q", network.CIDR)}
+	}
+	networkPrefix = networkPrefix.Masked()
+
+	defaultPrefix := unifi.DefaultPrefixFor(pool)
+
+	var drift []string
+	for _, subnet := range pool.Spec.Subnets {
+		drift = append(drift, subnetDrift(subnet, defaultPrefix, pool.Spec.Gateway, networkPrefix, network.Gateway)...)
 	}
 
-	poolSubnet := pool.Spec.Subnets[0]
-	driftDetected := false
+	return drift
+}
 
-	// Check CIDR drift
-	if poolSubnet.CIDR != unifiSpec.CIDR {
-		logger.Info("CIDR drift detected", "pool", poolSubnet.CIDR, "unifi", unifiSpec.CIDR)
-		driftDetected = true
+// subnetDrift lists where one subnet of a pool disagrees with the network:
+// see configurationDrift.
+func subnetDrift(subnet v1beta2.SubnetSpec, defaultPrefix int32, defaultGateway string, networkPrefix netip.Prefix, networkGateway string) []string {
+	name := subnet.CIDR
+	if name == "" {
+		name = subnet.Start + "-" + subnet.End
 	}
 
-	// Check gateway drift
-	if poolSubnet.Gateway != unifiSpec.Gateway {
-		logger.Info("Gateway drift detected", "pool", poolSubnet.Gateway, "unifi", unifiSpec.Gateway)
-		driftDetected = true
+	var drift []string
+
+	for _, bound := range subnetBounds(subnet) {
+		if addr, err := netip.ParseAddr(bound); err == nil && !networkPrefix.Contains(addr) {
+			drift = append(drift, fmt.Sprintf("subnet %s is outside network %s", name, networkPrefix))
+
+			break
+		}
 	}
 
-	return driftDetected
+	if prefix := poolutil.GetPrefix(subnet, defaultPrefix); int(prefix) != networkPrefix.Bits() {
+		drift = append(drift, fmt.Sprintf("subnet %s has prefix /%d, the network /%d", name, prefix, networkPrefix.Bits()))
+	}
+
+	if gateway := poolutil.GetGateway(subnet, defaultGateway); gateway != "" && networkGateway != "" && gateway != networkGateway {
+		drift = append(drift, fmt.Sprintf("subnet %s has gateway %s, the network %s", name, gateway, networkGateway))
+	}
+
+	return drift
+}
+
+// subnetBounds returns the addresses that delimit subnet: the network address
+// of its CIDR, or its start and end.
+func subnetBounds(subnet v1beta2.SubnetSpec) []string {
+	if subnet.CIDR != "" {
+		prefix, err := netip.ParsePrefix(subnet.CIDR)
+		if err != nil {
+			return nil
+		}
+
+		return []string{prefix.Masked().Addr().String()}
+	}
+
+	return []string{subnet.Start, subnet.End}
 }
 
 // updateSyncCondition updates the NetworkSynced condition based on sync results.
-func (r *IPPoolReconciler) updateSyncCondition(pool *v1beta2.IPPool, driftDetected bool, syncErr error) {
+func (r *IPPoolReconciler) updateSyncCondition(pool *v1beta2.IPPool, drift []string, syncErr error) {
 	condition := metav1.Condition{
 		Type:               ConditionNetworkSynced,
 		Status:             metav1.ConditionTrue,
@@ -483,10 +553,10 @@ func (r *IPPoolReconciler) updateSyncCondition(pool *v1beta2.IPPool, driftDetect
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "SyncFailed"
 		condition.Message = fmt.Sprintf("Failed to sync with Unifi: %v", syncErr)
-	} else if driftDetected {
+	} else if len(drift) > 0 {
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "ConfigurationDrift"
-		condition.Message = "Pool configuration differs from Unifi network configuration"
+		condition.Message = "Pool configuration differs from Unifi network configuration: " + strings.Join(drift, "; ")
 	}
 
 	r.setCondition(pool, condition)

@@ -300,7 +300,7 @@ func (h *UnifiClaimHandler) allocateIP(ctx context.Context, address *ipamv1beta2
 		address.Labels = make(map[string]string)
 	}
 	// Replace colons with dashes to comply with Kubernetes label requirements
-	address.Labels["unifi.ipam.cluster.x-k8s.io/mac"] = strings.ReplaceAll(macAddress, ":", "-")
+	address.Labels[MACAddressLabel] = strings.ReplaceAll(macAddress, ":", "-")
 
 	logger.Info("allocated IP address",
 		"claim", h.claim.Name,

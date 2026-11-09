@@ -127,7 +127,7 @@ func TestIPPoolReconciler_SyncRediscoversReKeyedNetwork(t *testing.T) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pool), stored); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.syncWithUnifi(ctx, stored, instance, logr.Discard()); err != nil {
+	if err := r.syncWithUnifi(ctx, stored, instance, nil, logr.Discard()); err != nil {
 		t.Fatalf("syncWithUnifi() error = %v", err)
 	}
 

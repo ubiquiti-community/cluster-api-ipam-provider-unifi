@@ -1087,3 +1087,118 @@ func TestAPIClient_GetOrAllocateIP_RepairsStaleNetworkID(t *testing.T) {
 		})
 	}
 }
+
+// UniFi writes ip_subnet as the router's own address with the network's prefix
+// length. The router is the gateway; it is not the first address after it.
+func TestSubnetSpecForNetwork(t *testing.T) {
+	tests := []struct {
+		name        string
+		network     unifi.Network
+		wantCIDR    string
+		wantGateway string
+		wantErr     bool
+	}{
+		{
+			name:        "router address",
+			network:     unifi.Network{ID: "n", IPSubnet: new("10.1.0.1/16")},
+			wantCIDR:    "10.1.0.0/16",
+			wantGateway: "10.1.0.1",
+		},
+		{
+			name:        "router not at .1",
+			network:     unifi.Network{ID: "n", IPSubnet: new("192.168.7.254/24")},
+			wantCIDR:    "192.168.7.0/24",
+			wantGateway: "192.168.7.254",
+		},
+		{
+			name:        "written as the network address",
+			network:     unifi.Network{ID: "n", IPSubnet: new("192.168.7.0/24")},
+			wantCIDR:    "192.168.7.0/24",
+			wantGateway: "192.168.7.1",
+		},
+		{
+			name:        "DHCP gateway override",
+			network:     unifi.Network{ID: "n", IPSubnet: new("10.1.0.1/16"), DHCPDGatewayEnabled: true, DHCPDGateway: new("10.1.0.2")},
+			wantCIDR:    "10.1.0.0/16",
+			wantGateway: "10.1.0.2",
+		},
+		{
+			name:        "DHCP gateway set but disabled",
+			network:     unifi.Network{ID: "n", IPSubnet: new("10.1.0.1/16"), DHCPDGateway: new("10.1.0.2")},
+			wantCIDR:    "10.1.0.0/16",
+			wantGateway: "10.1.0.1",
+		},
+		{
+			name:    "invalid subnet",
+			network: unifi.Network{ID: "n", IPSubnet: new("10.1.0.1")},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SubnetSpecForNetwork(&tt.network)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("SubnetSpecForNetwork() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got.CIDR != tt.wantCIDR || got.Gateway != tt.wantGateway {
+				t.Errorf("SubnetSpecForNetwork() = %s via %s, want %s via %s", got.CIDR, got.Gateway, tt.wantCIDR, tt.wantGateway)
+			}
+		})
+	}
+}
+
+// A claim bound before the UniFi Network 11 upgrade never revisits its
+// reservation, which kept the network ID the controller dropped. The pool sync
+// points such reservations at the pool's network, and nothing else.
+func TestAPIClient_RepairReservationNetworks(t *testing.T) {
+	record := func(id, mac, ip string, fixed bool, networkID string) unifi.Client {
+		return unifi.Client{ID: id, MAC: mac, FixedIP: ip, UseFixedIP: fixed, NetworkID: networkID}
+	}
+	f := &fakeController{
+		networks: reKeyedNetworks(),
+		clients: []unifi.Client{
+			record("stale", "b8:ae:ed:76:79:61", "10.1.40.35", true, oldNetworkID),
+			record("current", "88:ae:dd:75:3d:a0", "10.1.40.38", true, newNetworkID),
+			record("ui-made", "88:a2:9e:87:76:6c", "10.1.40.32", true, ""),
+			record("other-address", "88:a2:9e:a6:3f:b1", "10.1.40.99", true, oldNetworkID),
+			record("not-fixed", "88:a2:9e:87:77:6b", "10.1.40.34", false, oldNetworkID),
+			record("not-ours", "f4:4d:30:6f:a7:93", "10.1.40.36", true, oldNetworkID),
+		},
+	}
+	c := f.start(t)
+
+	repaired, err := c.RepairReservationNetworks(context.Background(), newNetworkID, map[string]string{
+		"b8:ae:ed:76:79:61": "10.1.40.35",
+		"88:ae:dd:75:3d:a0": "10.1.40.38",
+		"88:a2:9e:87:76:6c": "10.1.40.32",
+		"88:a2:9e:a6:3f:b1": "10.1.40.33",
+		"88:a2:9e:87:77:6b": "10.1.40.34",
+	})
+	if err != nil {
+		t.Fatalf("RepairReservationNetworks() error = %v", err)
+	}
+	if len(repaired) != 1 || repaired[0] != "10.1.40.35" {
+		t.Errorf("repaired = %v, want only 10.1.40.35", repaired)
+	}
+	want := record("stale", "b8:ae:ed:76:79:61", "10.1.40.35", true, newNetworkID)
+	if len(f.updated) != 1 || !reservationEqual(f.updated[0], want) {
+		t.Errorf("updates = %+v, want one update pointing b8:ae:ed:76:79:61 at %s and keeping its reservation", f.updated, newNetworkID)
+	}
+}
+
+func TestAPIClient_RepairReservationNetworks_NothingToRepair(t *testing.T) {
+	f := &fakeController{networks: reKeyedNetworks()}
+	c := f.start(t)
+
+	repaired, err := c.RepairReservationNetworks(context.Background(), newNetworkID, nil)
+	if err != nil || repaired != nil {
+		t.Errorf("RepairReservationNetworks(no reservations) = %v, %v, want nothing", repaired, err)
+	}
+}
+
+func reservationEqual(got, want unifi.Client) bool {
+	return got.MAC == want.MAC && got.FixedIP == want.FixedIP && got.UseFixedIP == want.UseFixedIP && got.NetworkID == want.NetworkID
+}
